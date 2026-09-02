@@ -1,0 +1,27 @@
+.env.*
+
+# Python / virtualenv
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Project runtime data
+logs/
+*.log
+rock_assistant/data/memory.json
+
+# OS files
+.DS_Store
+Thumbs.db

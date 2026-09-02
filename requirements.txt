@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+requests
+duckduckgo-search>=8.0.0
+google-genai>=2.0.0
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+pyttsx3>=2.90
+gTTS>=2.5.0
+SpeechRecognition>=3.10.0
+openai-whisper>=20231117
