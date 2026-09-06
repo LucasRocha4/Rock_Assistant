@@ -76,13 +76,13 @@ def run_voice_loop(
     specialist: Optional[SpecialistAgent] = None,
 ) -> None:
     """Executa o loop interativo em Modo Voz (Ouvidos com STT e Voz com TTS)."""
-    print("\n" + "=" * 60)
-    print(" 🎙️ [MODO VOZ ATIVO] Rock Assistant (Kali Linux)")
+    print("\n" + "/\\" * 60)
+    print(" 🎙️ [MODO VOZ ATIVO] Rock Assistant")
     print(" Fale no microfone ou diga 'sair' para encerrar.")
     print(" Diga 'limpar memoria' para reiniciar o contexto.")
-    print("=" * 60)
+    print("/\\" * 60)
 
-    welcome_msg = "Modo de voz ativado. Rock escutando."
+    welcome_msg = "Modo de voz operando. Iniciando dependênciais funcionais."
     tts.speak(welcome_msg)
 
     print("⏳ Aquecendo o modelo Gemini...")
