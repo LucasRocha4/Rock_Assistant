@@ -1,4 +1,10 @@
+.env
 .env.*
+!.env.example
+agy.md
+.ripgreprc
+.claude/
+.vscode/
 
 # Python / virtualenv
 __pycache__/
@@ -20,7 +26,7 @@ dist/
 # Project runtime data
 logs/
 *.log
-rock_assistant/data/memory.json
+rock_assistant/data/*
 
 # OS files
 .DS_Store

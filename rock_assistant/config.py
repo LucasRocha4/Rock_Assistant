@@ -1,10 +1,25 @@
 import os
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(dotenv_path: Path) -> None:
+        if not dotenv_path.exists():
+            return
+        for line in dotenv_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                name, value = line.split("=", 1)
+                os.environ.setdefault(name.strip(), value.strip().strip("\"'"))
+
 # ==========================================
 # 1. DIRETÓRIOS E ESTRUTURA DO SISTEMA
 # ==========================================
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 DATA_DIR = BASE_DIR / "data"
 LOG_DIR = BASE_DIR / "logs"
@@ -52,10 +67,11 @@ PAYLOAD_SCHEMAS = {
 # ==========================================
 # 4. PERSISTÊNCIA E INTEGRAÇÕES EXTERNAS
 # ==========================================
-DB_PATH = DATA_DIR / "rock.db"
+DB_PATH = Path(os.getenv("DB_PATH", "rock_assistant/data/rock.db"))
+if not DB_PATH.is_absolute():
+    DB_PATH = PROJECT_ROOT / DB_PATH
 MEMORY_FILE = DATA_DIR / "memory.json"
 MAX_MEMORY_MESSAGES = int(os.getenv("MAX_MEMORY_MESSAGES", "7"))
-PROJECT_ROOT = BASE_DIR.parent
 
 GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 GOOGLE_TOKEN_FILE = DATA_DIR / "token.json"
