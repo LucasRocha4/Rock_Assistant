@@ -37,10 +37,10 @@ VERSION = "0.1.0-alpha"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Modelo Roteador/Decisor (Lê input, decide ação e extrai parâmetros em JSON)
-GEMINI_MODEL_ROUTER = os.getenv("GEMINI_MODEL_ROUTER", "gemini-2.0-flash-lite")
+GEMINI_MODEL_ROUTER = os.getenv("GEMINI_MODEL_ROUTER", "gemini-flash-lite-latest")
 
 # Modelo Especialista/Operário (Análise densa, código, síntese e raciocínio complexo)
-GEMINI_MODEL_SPECIALIST = os.getenv("GEMINI_MODEL_SPECIALIST", "gemini-2.5-pro")
+GEMINI_MODEL_SPECIALIST = os.getenv("GEMINI_MODEL_SPECIALIST", "gemini-3.1-flash-lite")
 
 LLM_ROUTER_ENABLED = os.getenv("LLM_ROUTER_ENABLED", "False").lower() in {"true", "1", "yes"}
 
@@ -50,7 +50,7 @@ GEMINI_GENERATION_CONFIG = {
     "top_p": float(os.getenv("GEMINI_TOP_P", "0.95")),
 }
 
-GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "10"))
+GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 
 # ==========================================
 # 3. MAPEAMENTO DE ESTRUTURA DE PAYLOADS

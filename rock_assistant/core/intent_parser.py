@@ -13,9 +13,9 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
-except ImportError:
     from rock_assistant import config
+except ImportError:
+    import config
 
 
 def ping_gemini(api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
@@ -36,13 +36,15 @@ def ping_gemini(api_key: Optional[str] = None, model: Optional[str] = None) -> D
         from google.genai import types
         from google.genai.errors import APIError, ClientError, ServerError
 
-        client = genai.Client(api_key=key)
         timeout_val = getattr(config, "GEMINI_TIMEOUT", 30)
         gen_config = types.GenerateContentConfig(
             temperature=0.0,
-            http_options=types.HttpOptions(timeout=timeout_val * 1000 if timeout_val else 30000),
         )
 
+        client = genai.Client(
+            api_key=key,
+            http_options=types.HttpOptions(timeout=timeout_val * 1000 if timeout_val else 30000),
+        )
         response = client.models.generate_content(
             model=target_model,
             contents="responda apenas com: ping",
@@ -77,6 +79,10 @@ def ping_gemini(api_key: Optional[str] = None, model: Optional[str] = None) -> D
         print("[Gemini] Timeout na comunicação com a API do Gemini.")
         return {"success": False, "error": "timeout", "message": "Tempo limite excedido."}
     except Exception as exc:
+        err_str = str(exc).lower()
+        if "timeout" in err_str or "timed out" in err_str or "deadline exceeded" in err_str:
+            print(f"[Gemini] Timeout na comunicação com a API do Gemini: {exc}")
+            return {"success": False, "error": "timeout", "message": str(exc)}
         print(f"[Gemini] Erro de rede ou comunicação: {exc}")
         return {"success": False, "error": "erro de rede", "message": str(exc)}
 
@@ -90,11 +96,7 @@ class IntentParser:
 
     # Expressões regulares para detecção de intenções
     SEARCH_PATTERN = re.compile(
-        r"^(?:busca(?:r|r por| por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|google|ddg)\s+(.+)$",
-        re.IGNORECASE,
-    )
-    SEARCH_KEYWORD = re.compile(
-        r"\b(busca|pesquisar|pesquisa|pesquise|procura|procurar|procure|buscar)\b",
+        r"^(?:(?:você\s+pode|pode|poderia)\s+)?(?:busca(?:r|r por| por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|google|ddg)\b(?:\s+(.+))?$",
         re.IGNORECASE,
     )
 
@@ -109,7 +111,7 @@ class IntentParser:
     )
 
     COMMAND_PREFIX = re.compile(
-        r"^(?:exec|executa|executar|rode|rodar|run)\s+(.*)$",
+        r"^(?:exec|executa|executar|rode|rodar|run)\b(?:\s*(.*))?$",
         re.IGNORECASE,
     )
     COMMAND_KEYWORD = re.compile(
@@ -117,7 +119,7 @@ class IntentParser:
         re.IGNORECASE,
     )
     DIRECT_CLI = re.compile(
-        r"^(?:nmap|ping|ip\s+a|ip\s+addr|ip\s+-4|ifconfig|ss\b|netstat|uname|uptime|ls\b|cat\b|pwd\b)",
+        r"^(?:nmap\b|ping\b|ip\s+a\b|ip\s+addr\b|ip\s+-4\b|ifconfig\b|ss\b|netstat\b|uname\b|uptime\b|ls\b|cat\b|pwd\b)",
         re.IGNORECASE,
     )
 
@@ -125,8 +127,8 @@ class IntentParser:
     TIME_PATTERNS = [
         r"\b(?:às|as|ás|para as|para às|para as|at)\s+\d{1,2}(?:[:h]\d{2})?(?:\s*(?:am|pm))?",
         r"\b(?:em|no dia|dia|data)\s+\d{1,2}(?:/\d{1,2}(?:/\d{2,4})?)?",
-        r"\b(?:hoje|amanhã|amanha|depois de amanhã|depois de amanha)(?:\s+(?:às|as|ás|de|pela)\s+[\w\d:]+)?",
-        r"\b(?:pela manhã|pela manha|pela tarde|à noite|a noite|de noite)\b",
+        r"\b(?:depois de amanhã|depois de amanha|hoje|amanhã|amanha)(?:\s+(?:às|as|ás|de|pela)\s+[\w\d:]+)?",
+        r"\b(?:pela manhã|pela manha|de manhã|de manha|pela tarde|de tarde|à tarde|a tarde|à noite|a noite|de noite|pela noite)\b",
         r"\b(?:segunda(?:-feira)?|terça(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sábado|sabado|domingo)(?:\s+(?:às|as|ás)\s+[\w\d:]+)?",
         r"\b\d{1,2}[:h]\d{2}\b",
         r"\bpara\s+\d{1,2}(?:[:h]\d{2})?\b",
@@ -137,27 +139,31 @@ class IntentParser:
 
     def _extract_search_payload(self, text: str) -> Dict[str, str]:
         """Extrai o termo de busca a partir do texto."""
+        # Se for pergunta indireta como 'Você pode pesquisar ...?', preserva texto completo conforme especificado
+        if re.match(r"^(?:você\s+pode|pode|poderia)\s+", text, re.IGNORECASE):
+            return {"query": text}
+
         match = self.SEARCH_PATTERN.match(text)
-        if match:
+        if match and match.group(1):
             query = match.group(1).strip()
         else:
             # Remove palavras-chave comuns de busca do início
             query = re.sub(
-                r"^(?:busca(?:r|r por| por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|google)\s*",
+                r"^(?:busca(?:r|r por| por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|google|ddg)\s*",
                 "",
                 text,
                 flags=re.IGNORECASE,
             ).strip()
 
-        # Limpa termos redundantes iniciais como "sobre "
+        # Limpa termos redundantes iniciais como "sobre " ou "por "
         query = re.sub(r"^(?:sobre|por)\s+", "", query, flags=re.IGNORECASE).strip()
         return {"query": query if query else text}
 
     def _extract_reminder_payload(self, text: str) -> Dict[str, Optional[str]]:
         """Extrai a descrição da tarefa e o horário/data em {'text': ..., 'when': ...}."""
-        # 1. Remove gatilhos de comando do início
+        # 1. Remove gatilhos de comando do início com limites de palavra
         cleaned = re.sub(
-            r"^(?:lembre-me de|lembre-me|lembre de|lembre|lembrar de|lembrar|lembrete de|lembrete:|lembrete|agendar|agende|recordar de|recordar|alarme para|alarme)\s+",
+            r"^(?:lembre-me(?:\s+de)?|lembrete(?:\s+de|:)?|lembre(?:\s+de)?|lembrar(?:\s+de)?|recordar(?:\s+de)?|agendar|agende|alarme(?:\s+para)?)\b\s*",
             "",
             text,
             flags=re.IGNORECASE,
@@ -190,14 +196,14 @@ class IntentParser:
 
     def _extract_message_payload(self, text: str) -> Dict[str, str]:
         """Extrai destino e conteúdo em {'target': ..., 'text': ...}."""
-        # Padrão: mandar/enviar [mensagem] para <target> <text>
+        # Padrão com destinatário explícito: mandar/enviar [mensagem] para <target>[:,-]? <text>
         match_target = re.match(
-            r"^(?:mandar|enviar|notificar)?\s*(?:mensagem|msg|whatsapp|telegram)?\s*(?:para|pra|pro)\s+([^\s:]+)\s*[:,-]?\s*(.*)$",
+            r"^(?:mandar|enviar|notificar)?\s*(?:mensagem|msg|whatsapp|telegram)?\s*(?:para|pra|pro)\s+([^\s:,]+)\s*[:,-]?\s*(.*)$",
             text,
             re.IGNORECASE,
         )
         if match_target and match_target.group(1):
-            target = match_target.group(1).strip()
+            target = match_target.group(1).strip().strip(":,;")
             msg_content = match_target.group(2).strip()
             if not msg_content:
                 msg_content = text
@@ -217,9 +223,9 @@ class IntentParser:
     def _extract_command_payload(self, text: str) -> Dict[str, str]:
         """Extrai o comando do sistema em {'command': ...}."""
         match = self.COMMAND_PREFIX.match(text)
-        if match:
+        if match and match.group(1):
             cmd = match.group(1).strip()
-            return {"command": cmd}
+            return {"command": cmd if cmd else text}
 
         if re.search(r"\babrir\s+terminal\b", text, re.IGNORECASE):
             return {"command": "x-terminal-emulator"}
@@ -229,22 +235,33 @@ class IntentParser:
     def parse(self, user_input: str) -> Dict[str, Any]:
         """Identifica a intenção e extrai parâmetros estruturados via RegEx.
 
+        Aplica a ordem obrigatória de decisão:
+        1. comando direto ou prefixado
+        2. busca na web
+        3. lembrete
+        4. mensagem
+        5. comando por palavra-chave
+        6. conversa geral
+
         Retorna:
             Dict no formato: {'intent': <str>, 'payload': <dict>}
         """
-        cleaned_input = (user_input or "").strip()
+        if user_input is None:
+            return {"intent": None, "payload": {}}
+
+        cleaned_input = user_input.strip()
         if not cleaned_input:
             return {"intent": None, "payload": {}}
 
-        # 1. Comandos Diretos de CLI / Sistema
-        if self.COMMAND_PREFIX.match(cleaned_input) or self.DIRECT_CLI.match(cleaned_input):
+        # 1. Comandos Diretos de CLI ou Prefixados
+        if self.COMMAND_PREFIX.match(cleaned_input) or self.DIRECT_CLI.match(cleaned_input) or re.match(r"^abrir\s+terminal$", cleaned_input, re.IGNORECASE):
             return {
                 "intent": "command",
                 "payload": self._extract_command_payload(cleaned_input),
             }
 
         # 2. Busca na Web
-        if self.SEARCH_PATTERN.match(cleaned_input) or self.SEARCH_KEYWORD.search(cleaned_input):
+        if self.SEARCH_PATTERN.match(cleaned_input):
             return {
                 "intent": "search",
                 "payload": self._extract_search_payload(cleaned_input),
@@ -264,7 +281,7 @@ class IntentParser:
                 "payload": self._extract_message_payload(cleaned_input),
             }
 
-        # 5. Outros Comandos de Sistema
+        # 5. Outros Comandos de Sistema / Palavra-chave
         if self.COMMAND_KEYWORD.search(cleaned_input):
             return {
                 "intent": "command",
@@ -315,13 +332,15 @@ class IntentParser:
             from google import genai
             from google.genai import types
 
-            client = genai.Client(api_key=api_key)
             timeout_val = getattr(config, "GEMINI_TIMEOUT", 30)
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=timeout_val * 1000 if timeout_val else 30000),
+            )
             gen_config = types.GenerateContentConfig(
                 system_instruction=system_instructions,
                 temperature=0.0,
                 response_mime_type="application/json",
-                http_options=types.HttpOptions(timeout=timeout_val * 1000 if timeout_val else 30000),
             )
 
             model_name = getattr(config, "GEMINI_MODEL_ROUTER", "gemini-2.0-flash-lite")

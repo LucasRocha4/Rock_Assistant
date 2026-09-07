@@ -124,11 +124,13 @@ class SpecialistAgent:
             system_instruction=sys_content,
             temperature=temp,
             top_p=top_p,
-            http_options=types.HttpOptions(timeout=self.timeout * 1000 if self.timeout else 30000),
         )
 
         try:
-            client = genai.Client(api_key=key)
+            client = genai.Client(
+                api_key=key,
+                http_options=types.HttpOptions(timeout=self.timeout * 1000 if self.timeout else 30000),
+            )
             response = client.models.generate_content(
                 model=self.model,
                 contents=contents,
@@ -153,6 +155,9 @@ class SpecialistAgent:
         except TimeoutError:
             return f"⏱️ [Rock Timeout] O modelo '{self.model}' excedeu o tempo limite de resposta ({self.timeout}s)."
         except Exception as exc:
+            err_str = str(exc).lower()
+            if "timeout" in err_str or "timed out" in err_str or "deadline exceeded" in err_str:
+                return f"⏱️ [Rock Timeout] O modelo '{self.model}' excedeu o tempo limite de resposta ({self.timeout}s)."
             return f"❌ [Rock Specialist] Erro inesperado na comunicação com o Gemini: {exc}"
 
     def __call__(self, payload: Dict[str, Any]) -> str:
