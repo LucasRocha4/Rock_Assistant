@@ -41,7 +41,7 @@ flowchart TD
 5. `Router` procura o manipulador registrado para aquela intencao.
 6. A ferramenta executa a acao ou `SpecialistAgent` conversa com a API do Google Gemini.
 7. O resultado e exibido e salvo como resposta do assistente.
-8. No modo voz, a resposta tambem e enviada ao TTS.
+8. No modo voz, a resposta completa e exibida/salva na memoria e uma versao tratada e enviada ao TTS.
 
 As intencoes aceitas sao `search`, `reminder`, `command`, `message` e `general`.
 
@@ -73,7 +73,7 @@ Principais configuracoes:
 - `GEMINI_GENERATION_CONFIG`: parametros de temperatura e top_p para geracao;
 - `GEMINI_TIMEOUT`: tempo limite de resposta para a API em segundos;
 - `MEMORY_FILE`, `DB_PATH` e `MAX_MEMORY_MESSAGES`: persistencia e limite da memoria;
-- `VOICE_ENABLED`, `STT_MODEL`, `TTS_RATE`, `TTS_VOLUME` e `VOICE_LANGUAGE`: configuracoes de voz;
+- `VOICE_ENABLED`, `STT_MODEL`, `TTS_RATE`, `TTS_VOLUME`, `VOICE_LANGUAGE`, `TTS_BACKEND`, `PIPER_COMMAND`, `PIPER_MODEL_PATH`, `TTS_PLAYER` e `TTS_TEMP_DIR`: configuracoes de voz;
 - `get_credentials_path()` e `get_token_path()`: localizam credenciais do Google Calendar.
 
 A maioria dos valores pode ser alterada por variaveis de ambiente.
@@ -165,10 +165,11 @@ Gerencia lembretes locais e a possivel sincronizacao com o Google Calendar.
 - `GoogleCalendarAdapter` carrega OAuth2 de `credentials.json`/`token.json` e cria eventos no calendario principal;
 - `create_reminder()` grava primeiro no SQLite e depois tenta sincronizar;
 - se o Google nao estiver configurado, o lembrete continua salvo localmente com status `created_local`;
+- na interface, um lembrete criado com sucesso retorna apenas `Salvo`; detalhes técnicos permanecem no armazenamento e nos logs;
 - `list_reminders()` lista os lembretes mais recentes;
 - `ReminderTool` e um wrapper orientado a objetos.
 
-Observacao do comportamento atual: o adaptador monta o evento com o horario atual em UTC para inicio e fim; o texto informado em `when` fica na descricao. Portanto, a data/hora extraida pelo parser ainda nao controla o horario efetivo do evento do Google Calendar.
+O adaptador converte `when` em data e hora efetivas no Google Calendar. Expressões como `amanhã meio dia` ou `amanhã ao meio-dia` criam um evento com `dateTime` às 12:00; quando apenas uma data é informada, como `amanhã`, o evento continua sendo de dia inteiro.
 
 ### `rock_assistant/tools/system_cmd.py`
 
@@ -206,14 +207,33 @@ Sem microfone ou dependencias de audio, `listen()` retorna uma string vazia e o 
 
 Implementa Text-to-Speech.
 
-- inicializa `pyttsx3`, normalmente usando espeak-ng;
-- procura uma voz portuguesa, dando prioridade a PT-BR;
-- usa gTTS e um player local como fallback;
-- permite alterar velocidade e volume;
-- protege a fala com um lock para evitar reproducoes simultaneas;
+- usa Piper como backend principal, gerando WAV localmente e reproduzindo-o com `ffplay`, `mpv` ou `aplay`;
+- mantém `pyttsx3` como último fallback quando o comando, modelo ou player do Piper não estiver disponível;
+- permite configurar modelo, player, velocidade, volume e diretório temporário por variáveis de ambiente;
+- mantém `speak()`, `stop()`, `is_available()` e `get_tts()` para preservar o contrato do modo voz;
+- `stop()` interrompe o processo de reprodução atual quando o player permite;
 - `get_tts()` fornece uma instancia global.
 
-Se nenhum motor estiver disponivel, o assistente continua funcionando em texto e registra um aviso.
+Para ativar o Piper, instale `piper-tts`, instale um player de áudio e baixe um modelo `.onnx` com seu arquivo `.onnx.json`. Por exemplo, configure:
+
+```bash
+./.venv/bin/python -m pip install piper-tts
+mkdir -p models/piper
+./.venv/bin/python -m piper.download_voices pt_BR-faber-medium --download-dir models/piper
+PIPER_MODEL_PATH=/caminho/para/pt_BR-faber-medium.onnx
+TTS_PLAYER=ffplay
+```
+
+O modelo não deve ser versionado no repositório. Se o Piper não estiver pronto, o Rock usa `pyttsx3` e registra o motivo do fallback.
+
+### `rock_assistant/core/speech_formatter.py`
+
+Cria a representação específica da resposta para fala. O terminal e a memória preservam a resposta original, enquanto o TTS recebe uma versão determinística que:
+
+- converte operadores como `=`, `==`, `!=`, `>=` e `<=` em expressões faladas;
+- remove URLs, separadores, emojis e formatação Markdown que não ajudam na conversa;
+- transforma dicionários e listas em frases com rótulos naturais;
+- mantém o conteúdo útil de resultados de busca e comandos sem fazer uma nova chamada ao Gemini.
 
 ### `rock_assistant/tools/__init__.py`
 
@@ -270,6 +290,10 @@ MICROPHONE_INDEX=0
 MICROPHONE_NAME=
 TTS_RATE=175
 TTS_VOLUME=1.0
+TTS_BACKEND=piper
+PIPER_COMMAND=piper
+PIPER_MODEL_PATH=models/piper/pt_BR-faber-medium.onnx
+TTS_PLAYER=ffplay
 ```
 
 ## 6. Testes relacionados

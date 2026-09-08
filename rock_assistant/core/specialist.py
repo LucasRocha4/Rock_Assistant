@@ -27,6 +27,7 @@ SYSTEM_PROMPT_DEFAULT = (
     "- Especialista em Engenharia de Software, Python moderno, arquitetura de sistemas, segurança defensiva e ofensiva, redes e terminal Linux.\n"
     "- Sempre que solicitado código, forneça implementações limpas, funcionais, seguras e com breves explicações práticas.\n"
     "- Coloque um pouco de ironia e humor inteligente e ácido em suas respostas, mas sem perder a objetividade.\n"
+    "- Em conversa casual, responda em 1 a 3 frases naturais e só aprofunde quando o usuário pedir.\n"
 )
 
 
@@ -46,6 +47,7 @@ class SpecialistAgent:
         self.system_prompt = system_prompt or SYSTEM_PROMPT_DEFAULT
         self.memory = memory
         self.timeout = timeout or getattr(config, "GEMINI_TIMEOUT", 30)
+        self._client = None
 
     def is_available(self) -> bool:
         """Verifica se a chave de API está configurada."""
@@ -93,8 +95,8 @@ class SpecialistAgent:
 
         if active_memory:
             history = active_memory.get_history()
-            # Utiliza as mensagens recentes para contexto
-            for msg in history[-6:]:
+            # Utiliza apenas os turnos mais recentes para manter a chamada leve.
+            for msg in history[-4:]:
                 role = msg.get("role")
                 content_text = (msg.get("content") or "").strip()
                 if not content_text:
@@ -119,19 +121,22 @@ class SpecialistAgent:
         gen_config_dict = getattr(config, "GEMINI_GENERATION_CONFIG", {})
         temp = gen_config_dict.get("temperature", 0.2)
         top_p = gen_config_dict.get("top_p", 0.95)
+        max_output_tokens = int(getattr(config, "GEMINI_MAX_OUTPUT_TOKENS", 512))
 
         gen_config = types.GenerateContentConfig(
             system_instruction=sys_content,
             temperature=temp,
             top_p=top_p,
+            max_output_tokens=max_output_tokens,
         )
 
         try:
-            client = genai.Client(
-                api_key=key,
-                http_options=types.HttpOptions(timeout=self.timeout * 1000 if self.timeout else 30000),
-            )
-            response = client.models.generate_content(
+            if self._client is None:
+                self._client = genai.Client(
+                    api_key=key,
+                    http_options=types.HttpOptions(timeout=self.timeout * 1000 if self.timeout else 30000),
+                )
+            response = self._client.models.generate_content(
                 model=self.model,
                 contents=contents,
                 config=gen_config,

@@ -15,6 +15,7 @@ if str(BASE_DIR) not in sys.path:
 from core.intent_parser import IntentParser
 from core.memory import ConversationMemory
 from core.router import Router
+from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
 from tools.messaging import send_message
 from tools.reminders import create_reminder
@@ -32,16 +33,22 @@ def build_router(
     router = Router()
     specialist_agent = specialist or SpecialistAgent(memory=memory)
 
+    def handle_reminder(payload):
+        result = create_reminder(
+            payload.get("text", ""),
+            payload.get("when"),
+        )
+        if isinstance(result, dict) and str(result.get("status", "")).startswith("created_"):
+            return "Salvo"
+        return result
+
     router.register(
         "search",
         lambda payload: search_web(payload.get("query", payload.get("text", ""))),
     )
     router.register(
         "reminder",
-        lambda payload: create_reminder(
-            payload.get("text", ""),
-            payload.get("when"),
-        ),
+        handle_reminder,
     )
     router.register(
         "command",
@@ -85,13 +92,7 @@ def run_voice_loop(
     welcome_msg = "Modo de voz operando. Iniciando dependênciais funcionais."
     tts.speak(welcome_msg)
 
-    print("⏳ Aquecendo o modelo Gemini...")
-    if specialist is not None and specialist.is_available():
-        request_timeout = specialist.timeout
-        specialist.timeout = max(request_timeout, 60)
-        specialist.chat("OK", memory=None)
-        specialist.timeout = request_timeout
-    print("✅ Modelo pronto.")
+    print("✅ Rock pronto.")
 
     mic_available = stt.is_microphone_available()
     if not mic_available:
@@ -160,12 +161,12 @@ def run_voice_loop(
 
             # 3. Registra resposta na memória e sintetiza áudio falado via TTS
             memory.add_assistant_message(response_text)
-            tts.speak(response_text)
+            tts.speak(format_for_speech(response_text, intent=intent))
 
         except Exception as exc:
             err_msg = f"Erro ao processar comando: {exc}"
             print(f"❌ {err_msg}")
-            tts.speak(err_msg)
+            tts.speak(format_for_speech(err_msg))
             memory.add_assistant_message(err_msg)
 
 

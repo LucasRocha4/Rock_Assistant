@@ -1,8 +1,9 @@
 """Ferramentas para agendamento de lembretes e tarefas recorrentes com SQLite e Google Calendar API."""
 
 import sqlite3
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -170,18 +171,74 @@ class GoogleCalendarAdapter:
 
         return creds
 
+    @staticmethod
+    def _parse_when(when: Optional[str]) -> tuple[Optional[datetime], bool]:
+        """Converte expressões simples do parser em data/hora do Calendar."""
+        value = (when or "").strip().lower()
+        now = datetime.now().astimezone()
+
+        midday_match = re.search(r"(?:ao\s+)?meio[- ]dia", value)
+        midnight_match = re.search(r"(?:à|a|pela)?\s*meia[- ]noite", value)
+        time_match = re.search(r"(?:às|as|ás|at)\s+(\d{1,2})(?::|h)?(\d{2})?", value)
+        if midday_match:
+            hour, minute = 12, 0
+        elif midnight_match:
+            hour, minute = 0, 0
+        else:
+            hour = int(time_match.group(1)) if time_match else None
+            minute = int(time_match.group(2) or 0) if time_match else 0
+
+        if "depois de amanhã" in value or "depois de amanha" in value:
+            event_date = now.date() + timedelta(days=2)
+        elif "amanhã" in value or "amanha" in value:
+            event_date = now.date() + timedelta(days=1)
+        elif "hoje" in value:
+            event_date = now.date()
+        else:
+            date_match = re.search(r"(?:dia|data|no dia)\s+(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?", value)
+            if not date_match:
+                return None, False
+            day = int(date_match.group(1))
+            month = int(date_match.group(2) or now.month)
+            year_text = date_match.group(3)
+            year = int(year_text) if year_text else now.year
+            if year < 100:
+                year += 2000
+            try:
+                event_date = datetime(year, month, day).date()
+            except ValueError:
+                return None, False
+
+        if hour is None:
+            return datetime.combine(event_date, datetime.min.time(), tzinfo=now.tzinfo), True
+        if hour > 23 or minute > 59:
+            return None, False
+        return datetime.combine(event_date, datetime.min.time(), tzinfo=now.tzinfo).replace(
+            hour=hour,
+            minute=minute,
+        ), False
+
     def sync_event(self, message: str, when: Optional[str] = None) -> Dict[str, Any]:
         """Cria um evento no Google Calendar."""
         creds = self.get_credentials()
         from googleapiclient.discovery import build
         service = build("calendar", "v3", credentials=creds)
 
+        scheduled_at, all_day = self._parse_when(when)
+        if scheduled_at is None:
+            scheduled_at = datetime.now().astimezone()
+
         event_body = {
             "summary": f"[Rock] {message}",
             "description": f"Lembrete agendado pelo Rock Assistant: {message}\nHorário informado: {when or 'Não especificado'}",
-            "start": {"dateTime": datetime.now(timezone.utc).isoformat()},
-            "end": {"dateTime": datetime.now(timezone.utc).isoformat()},
         }
+        if all_day:
+            event_body["start"] = {"date": scheduled_at.date().isoformat()}
+            event_body["end"] = {"date": (scheduled_at.date() + timedelta(days=1)).isoformat()}
+        else:
+            event_body["start"] = {"dateTime": scheduled_at.isoformat()}
+            event_body["end"] = {"dateTime": (scheduled_at + timedelta(minutes=30)).isoformat()}
+
         created_event = service.events().insert(calendarId="primary", body=event_body).execute()
         return {
             "event_id": created_event.get("id"),

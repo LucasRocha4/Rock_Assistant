@@ -101,7 +101,7 @@ class IntentParser:
     )
 
     REMINDER_KEYWORD = re.compile(
-        r"\b(lembre-me|lembre|lembrar|lembrete|recordar|alarme|agendar|agende)\b",
+        r"\b(lembre-me|lembre|lembra|lembrar|lembrete|recordar|alarme|agendar|agende)\b",
         re.IGNORECASE,
     )
 
@@ -125,9 +125,10 @@ class IntentParser:
 
     # Expressões temporais para extração do campo 'when' em lembretes
     TIME_PATTERNS = [
+        r"\b(?:depois de amanhã|depois de amanha|hoje|amanhã|amanha)\s+(?:às|as|ás|ao|a)?\s*(?:meio[- ]dia|meio dia|meia[- ]noite|meia noite|\d{1,2}(?:[:h]\d{2})?(?:\s*(?:am|pm))?)",
         r"\b(?:às|as|ás|para as|para às|para as|at)\s+\d{1,2}(?:[:h]\d{2})?(?:\s*(?:am|pm))?",
         r"\b(?:em|no dia|dia|data)\s+\d{1,2}(?:/\d{1,2}(?:/\d{2,4})?)?",
-        r"\b(?:depois de amanhã|depois de amanha|hoje|amanhã|amanha)(?:\s+(?:às|as|ás|de|pela)\s+[\w\d:]+)?",
+        r"\b(?:depois de amanhã|depois de amanha|hoje|amanhã|amanha)(?:\s+(?:às|as|ás|ao|a|de|pela)\s+[\w\d:]+)?",
         r"\b(?:pela manhã|pela manha|de manhã|de manha|pela tarde|de tarde|à tarde|a tarde|à noite|a noite|de noite|pela noite)\b",
         r"\b(?:segunda(?:-feira)?|terça(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sábado|sabado|domingo)(?:\s+(?:às|as|ás)\s+[\w\d:]+)?",
         r"\b\d{1,2}[:h]\d{2}\b",
@@ -163,7 +164,7 @@ class IntentParser:
         """Extrai a descrição da tarefa e o horário/data em {'text': ..., 'when': ...}."""
         # 1. Remove gatilhos de comando do início com limites de palavra
         cleaned = re.sub(
-            r"^(?:lembre-me(?:\s+de)?|lembrete(?:\s+de|:)?|lembre(?:\s+de)?|lembrar(?:\s+de)?|recordar(?:\s+de)?|agendar|agende|alarme(?:\s+para)?)\b\s*",
+            r"^(?:(?:eu\s+)?quero\s+que\s+(?:você\s+)?me\s+lembre(?:\s+de)?|não\s+esqueça\s+de\s+me\s+lembrar(?:\s+de)?|(?:pode\s+|por\s+favor\s+)?me\s+lembr(?:e|a)(?:\s+de)?|lembre-me(?:\s+de)?|lembrete(?:\s+de|:)?|lembre(?:\s+de)?|lembrar(?:\s+de)?|recordar(?:\s+de)?|agendar|agende|alarme(?:\s+para)?)\b\s*",
             "",
             text,
             flags=re.IGNORECASE,
@@ -187,6 +188,7 @@ class IntentParser:
 
         # 3. Limpeza final de preposições no início/fim do texto da tarefa
         task_text = re.sub(r"^(?:de|para|que)\s+", "", task_text, flags=re.IGNORECASE).strip()
+        task_text = re.sub(r"^[:;,\-]\s*", "", task_text).strip()
         task_text = re.sub(r"\s+(?:para|de|em|às|as|ás)$", "", task_text, flags=re.IGNORECASE).strip()
 
         if not task_text:

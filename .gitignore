@@ -26,8 +26,15 @@ dist/
 # Project runtime data
 logs/
 *.log
-rock_assistant/data/*
+rock_assistant/data/*.json
+rock_assistant/data/*.db
+rock_assistant/data/*.sqlite
+models/
 
 # OS files
 .DS_Store
 Thumbs.db
+agy.md
+tests/test_battery.py
+agy.md
+DOCUMENTACAO.md

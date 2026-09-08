@@ -49,6 +49,7 @@ GEMINI_GENERATION_CONFIG = {
     "temperature": float(os.getenv("GEMINI_TEMPERATURE", "0.1")),
     "top_p": float(os.getenv("GEMINI_TOP_P", "0.95")),
 }
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "512"))
 
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 
@@ -85,6 +86,13 @@ TTS_VOLUME = float(os.getenv("TTS_VOLUME", "0.75"))  # 0.0 a 1.0
 VOICE_LANGUAGE = os.getenv("VOICE_LANGUAGE", "pt-BR")
 MICROPHONE_INDEX = os.getenv("MICROPHONE_INDEX", "0")
 MICROPHONE_NAME = os.getenv("MICROPHONE_NAME", "")
+TTS_BACKEND = os.getenv("TTS_BACKEND", "piper")
+PIPER_COMMAND = os.getenv("PIPER_COMMAND", "piper")
+PIPER_MODEL_PATH = Path(
+    os.getenv("PIPER_MODEL_PATH", str(PROJECT_ROOT / "models" / "piper" / "pt_BR-faber-medium.onnx"))
+)
+TTS_PLAYER = os.getenv("TTS_PLAYER", "")
+TTS_TEMP_DIR = Path(os.getenv("TTS_TEMP_DIR")) if os.getenv("TTS_TEMP_DIR") else None
 
 
 def get_credentials_path() -> Path:

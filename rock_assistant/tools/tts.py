@@ -1,6 +1,7 @@
-"""Módulo de Síntese de Fala (Text-to-Speech - TTS) do Rock Assistant."""
+"""Síntese de fala do Rock usando Piper e fallback final para pyttsx3."""
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -10,166 +11,217 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-# Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
     import config
-    from config import TTS_RATE, TTS_VOLUME
 except ImportError:
     from rock_assistant import config
-    from rock_assistant.config import TTS_RATE, TTS_VOLUME
 
 logger = logging.getLogger("rock.tts")
 
 
 class TextToSpeech:
-    """Transforma as respostas de texto do Rock em áudio falado utilizando pyttsx3 / espeak-ng."""
+    """Converte texto em fala com Piper e usa pyttsx3 apenas como último recurso."""
 
-    def __init__(
-        self,
-        rate: Optional[int] = None,
-        volume: Optional[float] = None,
-    ) -> None:
+    def __init__(self, rate: Optional[int] = None, volume: Optional[float] = None) -> None:
         self.rate = rate if rate is not None else getattr(config, "TTS_RATE", 175)
         self.volume = volume if volume is not None else getattr(config, "TTS_VOLUME", 1.0)
+        self.backend = "piper"
         self.engine = None
         self.voice_id: Optional[str] = None
-        self._lock = threading.Lock()
-        self._init_engine()
-
-    def _init_engine(self) -> None:
-        """Inicializa o motor de síntese de voz pyttsx3."""
-        try:
-            import pyttsx3
-            self.engine = pyttsx3.init()
-            self.rate = 160
-            self.volume = 1.0
-            self.engine.setProperty("rate", self.rate)
-            self.engine.setProperty("volume", self.volume)
-
-            voices = self.engine.getProperty("voices") or []
-            selected_voice = self._select_portuguese_voice(voices)
-            if selected_voice is not None:
-                self.voice_id = selected_voice.id
-                self.engine.setProperty("voice", self.voice_id)
-                logger.info(f"Voz TTS selecionada: {self.voice_id}")
-            else:
-                logger.warning("Nenhuma voz PT-BR/PT foi encontrada no espeak-ng.")
-        except Exception as exc:
-            logger.warning(f"Não foi possível inicializar o motor TTS pyttsx3: {exc}")
-            self.engine = None
+        self._player: Optional[subprocess.Popen] = None
+        self._state_lock = threading.Lock()
+        self._speak_lock = threading.Lock()
 
     @staticmethod
-    def _select_portuguese_voice(voices):
-        """Seleciona PT-BR por idioma exato, sem confundir inglês com português."""
-        candidates = []
-        for voice in voices:
-            raw_languages = getattr(voice, "languages", []) or []
-            language_text = " ".join(
-                item.decode(errors="ignore") if isinstance(item, bytes) else str(item)
-                for item in raw_languages
-            ).lower()
-            metadata = f"{voice.id} {getattr(voice, 'name', '')} {language_text}".lower()
-            language_codes = set(re.findall(r"(?<![a-z])pt(?:[-_]br)?(?![a-z])", metadata))
-            if "pt-br" in language_codes or "pt_br" in language_codes or "brazil" in metadata:
-                return voice
-            if "pt" in language_codes or "portuguese" in metadata:
-                candidates.append(voice)
-        return candidates[0] if candidates else None
+    def _prepare_text(text: str) -> str:
+        """Remove formatação que tende a ser pronunciada de forma artificial."""
+        prepared = re.sub(r"```(?:\w+)?\s*|```", "", text)
+        prepared = re.sub(r"https?://\S+|www\.\S+", " um link ", prepared)
+        prepared = re.sub(r"[*_#>`]", "", prepared)
+        return re.sub(r"\s+", " ", prepared).strip()
 
-    def _speak_with_gtts(self, text: str) -> bool:
-        """Usa gTTS opcionalmente quando o espeak-ng não está disponível."""
+    @property
+    def _model_path(self) -> Path:
+        return Path(getattr(config, "PIPER_MODEL_PATH", ""))
+
+    @property
+    def _piper_command(self) -> str:
+        configured = str(getattr(config, "PIPER_COMMAND", "piper"))
+        if shutil.which(configured):
+            return configured
+        venv_command = Path(sys.executable).with_name(configured)
+        return str(venv_command) if venv_command.is_file() else configured
+
+    def _piper_available(self) -> bool:
+        return bool(shutil.which(self._piper_command) and self._model_path.is_file())
+
+    def _select_player(self) -> Optional[str]:
+        configured = getattr(config, "TTS_PLAYER", "")
+        if configured:
+            return configured if shutil.which(configured) else None
+        return next((name for name in ("ffplay", "mpv", "pw-play", "aplay") if shutil.which(name)), None)
+
+    def _temp_file(self) -> tempfile.NamedTemporaryFile:
+        temp_dir = getattr(config, "TTS_TEMP_DIR", None)
+        return tempfile.NamedTemporaryFile(suffix=".wav", dir=temp_dir, delete=False)
+
+    def _piper_speed(self) -> float:
+        return max(0.5, min(2.0, 175.0 / max(80, min(260, int(self.rate)))))
+
+    def _build_player_command(self, player: str, audio_path: str) -> list[str]:
+        if player == "ffplay":
+            return [
+                player,
+                "-nodisp",
+                "-autoexit",
+                "-loglevel",
+                "quiet",
+                "-volume",
+                str(round(self.volume * 100)),
+                audio_path,
+            ]
+        if player == "mpv":
+            return [player, "--no-video", "--really-quiet", f"--volume={self.volume * 100}", audio_path]
+        return [player, audio_path]
+
+    def _play(self, audio_path: str) -> bool:
+        player = self._select_player()
+        if not player:
+            logger.warning("Nenhum player de áudio encontrado para o Piper.")
+            return False
+
         try:
-            from gtts import gTTS
+            process = subprocess.Popen(
+                self._build_player_command(player, audio_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            with self._state_lock:
+                self._player = process
+            return process.wait() == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Falha ao reproduzir áudio Piper: %s", exc)
+            return False
+        finally:
+            with self._state_lock:
+                self._player = None
 
-            player = next((command for command in ("mpg123", "mpv", "ffplay") if shutil.which(command)), None)
-            if not player:
-                return False
+    def _speak_with_piper(self, text: str) -> bool:
+        if not self._piper_available():
+            return False
 
-            with tempfile.NamedTemporaryFile(suffix=".mp3") as audio_file:
-                gTTS(text=text, lang="pt", tld="com.br").save(audio_file.name)
-                subprocess.run(
-                    [player, "-q", audio_file.name] if player == "mpg123" else [player, audio_file.name],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+        audio_file = self._temp_file()
+        audio_file.close()
+        try:
+            command = [
+                self._piper_command,
+                "--model",
+                str(self._model_path),
+                "--output_file",
+                audio_file.name,
+                "--length_scale",
+                str(self._piper_speed()),
+            ]
+            subprocess.run(
+                command,
+                input=text,
+                text=True,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return self._play(audio_file.name)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("Falha ao sintetizar com Piper: %s", exc)
+            return False
+        finally:
+            try:
+                os.unlink(audio_file.name)
+            except FileNotFoundError:
+                pass
+
+    def _init_pyttsx3(self) -> bool:
+        if self.engine is not None:
+            return True
+        try:
+            import pyttsx3
+
+            self.engine = pyttsx3.init()
+            self.engine.setProperty("rate", max(80, min(260, int(self.rate))))
+            self.engine.setProperty("volume", max(0.0, min(1.0, float(self.volume))))
+            voices = self.engine.getProperty("voices") or []
+            for voice in voices:
+                metadata = f"{voice.id} {getattr(voice, 'name', '')} {getattr(voice, 'languages', [])}".lower()
+                if "pt-br" in metadata or "brazil" in metadata:
+                    self.voice_id = voice.id
+                    self.engine.setProperty("voice", self.voice_id)
+                    break
             return True
         except Exception as exc:
-            logger.warning(f"Fallback gTTS indisponível: {exc}")
+            logger.warning("Fallback pyttsx3 indisponível: %s", exc)
+            self.engine = None
+            return False
+
+    def _speak_with_pyttsx3(self, text: str) -> bool:
+        if not self._init_pyttsx3():
+            return False
+        try:
+            self.engine.say(text)
+            self.engine.runAndWait()
+            self.backend = "pyttsx3"
+            return True
+        except Exception as exc:
+            logger.warning("Falha no fallback pyttsx3: %s", exc)
             return False
 
     def is_available(self) -> bool:
-        """Verifica se o motor de voz está instanciado e operacional."""
-        return self.engine is not None
+        """Indica se Piper está pronto ou se o fallback pyttsx3 pode ser usado."""
+        return self._piper_available() or self._init_pyttsx3()
 
     def set_rate(self, rate: int) -> None:
-        """Ajusta a velocidade de fala (palavras por minuto)."""
-        self.rate = rate
+        self.rate = max(80, min(260, int(rate)))
         if self.engine is not None:
-            try:
-                self.engine.setProperty("rate", self.rate)
-            except Exception:
-                pass
+            self.engine.setProperty("rate", self.rate)
 
     def set_volume(self, volume: float) -> None:
-        """Ajusta o volume do áudio (escala de 0.0 a 1.0)."""
-        self.volume = max(0.0, min(1.0, volume))
+        self.volume = max(0.0, min(1.0, float(volume)))
         if self.engine is not None:
-            try:
-                self.engine.setProperty("volume", self.volume)
-            except Exception:
-                pass
+            self.engine.setProperty("volume", self.volume)
 
     def speak(self, text: str) -> bool:
-        """Sintetiza e reproduz o texto fornecido.
-
-        Args:
-            text: Texto a ser falado pelo assistente.
-
-        Returns:
-            bool: True se o áudio foi reproduzido com sucesso, False em caso de falha.
-        """
-        cleaned_text = (text or "").strip()
+        """Sintetiza e reproduz uma mensagem, preferindo Piper."""
+        cleaned_text = self._prepare_text((text or "").strip())
         if not cleaned_text:
             return False
 
-        with self._lock:
-            try:
-                if self.engine is None:
-                    self._init_engine()
-
-                if self.engine is not None:
-                    self.engine.say(cleaned_text)
-                    self.engine.runAndWait()
-                    return True
-                else:
-                    logger.warning(f"[TTS Offline] Mensagem que seria sintetizada: {cleaned_text}")
-                    return self._speak_with_gtts(cleaned_text)
-            except Exception as exc:
-                logger.warning(f"Falha na reprodução de áudio TTS: {exc}")
-                # Tenta reinicializar o motor para as próximas chamadas
-                self._init_engine()
-                return self._speak_with_gtts(cleaned_text)
+        with self._speak_lock:
+            if self._speak_with_piper(cleaned_text):
+                self.backend = "piper"
+                return True
+            return self._speak_with_pyttsx3(cleaned_text)
 
     def stop(self) -> None:
-        """Interrompe imediatamente a reprodução de fala em andamento."""
-        with self._lock:
-            if self.engine is not None:
-                try:
-                    self.engine.stop()
-                except Exception as exc:
-                    logger.warning(f"Erro ao tentar parar TTS: {exc}")
+        """Interrompe a reprodução atual sem bloquear esperando o lock de fala."""
+        with self._state_lock:
+            player = self._player
+        if player is not None and player.poll() is None:
+            player.terminate()
+        if self.engine is not None:
+            try:
+                self.engine.stop()
+            except Exception as exc:
+                logger.warning("Erro ao interromper pyttsx3: %s", exc)
 
 
 _global_tts_instance: Optional[TextToSpeech] = None
 
 
 def get_tts() -> TextToSpeech:
-    """Obtém a instância global singleton de TextToSpeech."""
+    """Obtém a instância global de TextToSpeech."""
     global _global_tts_instance
     if _global_tts_instance is None:
         _global_tts_instance = TextToSpeech()
@@ -177,10 +229,8 @@ def get_tts() -> TextToSpeech:
 
 
 def speak(text: str) -> bool:
-    """Função utilitária direta para sintetizar e falar texto."""
     return get_tts().speak(text)
 
 
 def stop() -> None:
-    """Função utilitária direta para interromper a fala."""
     get_tts().stop()
