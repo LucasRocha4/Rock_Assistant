@@ -3,9 +3,12 @@
 import sqlite3
 import re
 import sys
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from rock_assistant.core.reminder_interpreter import ReminderDraft
 
 # Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,7 +42,7 @@ class SQLiteReminderStorage:
 
     def _init_db(self) -> None:
         """Cria as tabelas necessárias se não existirem."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -53,6 +56,23 @@ class SQLiteReminderStorage:
                 )
                 """
             )
+            existing_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(reminders)").fetchall()
+            }
+            new_columns = {
+                "raw_text": "TEXT",
+                "short_text": "TEXT",
+                "kind": "TEXT NOT NULL DEFAULT 'calendar_event'",
+                "importance": "TEXT NOT NULL DEFAULT 'normal'",
+                "scheduled_at": "TEXT",
+                "timezone": "TEXT",
+                "all_day": "INTEGER NOT NULL DEFAULT 0",
+                "delivery_status": "TEXT NOT NULL DEFAULT 'pending'",
+                "delivered_at": "TEXT",
+            }
+            for name, definition in new_columns.items():
+                if name not in existing_columns:
+                    cursor.execute(f"ALTER TABLE reminders ADD COLUMN {name} {definition}")
             conn.commit()
 
     def add_reminder(
@@ -61,17 +81,35 @@ class SQLiteReminderStorage:
         when_time: Optional[str] = None,
         google_event_id: Optional[str] = None,
         synced_google: bool = False,
+        draft: Optional[ReminderDraft] = None,
     ) -> Dict[str, Any]:
         """Insere um novo lembrete no banco de dados local."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO reminders (message, when_time, synced_google, google_event_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO reminders (
+                    message, when_time, synced_google, google_event_id,
+                    raw_text, short_text, kind, importance, scheduled_at,
+                    timezone, all_day, delivery_status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (message, when_time, 1 if synced_google else 0, google_event_id),
+                (
+                    message,
+                    when_time,
+                    1 if synced_google else 0,
+                    google_event_id,
+                    draft.raw_text if draft else message,
+                    draft.short_text if draft else message,
+                    draft.kind if draft else "calendar_event",
+                    draft.importance if draft else "normal",
+                    draft.scheduled_at if draft else None,
+                    draft.timezone if draft else None,
+                    1 if draft and draft.all_day else 0,
+                    "pending",
+                ),
             )
             conn.commit()
             reminder_id = cursor.lastrowid
@@ -81,7 +119,7 @@ class SQLiteReminderStorage:
 
     def list_reminders(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retorna os lembretes mais recentes do banco SQLite."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
@@ -91,9 +129,58 @@ class SQLiteReminderStorage:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
+    def list_pending_messages(
+        self,
+        limit: int = 50,
+        now: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retorna mensagens internas pendentes que já podem ser entregues."""
+        reference = now or datetime.now().astimezone()
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM reminders
+                WHERE kind = 'self_message' AND delivery_status = 'pending'
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            rows = []
+            for row in cursor.fetchall():
+                record = dict(row)
+                scheduled_at = record.get("scheduled_at")
+                if not scheduled_at:
+                    rows.append(record)
+                    continue
+                try:
+                    scheduled = datetime.fromisoformat(scheduled_at)
+                except ValueError:
+                    continue
+                if scheduled <= reference:
+                    rows.append(record)
+            return rows
+
+    def mark_delivered(self, reminder_ids: List[int]) -> int:
+        """Marca mensagens internas como entregues após seu conteúdo ser apresentado."""
+        if not reminder_ids:
+            return 0
+        delivered_at = datetime.now().astimezone().isoformat()
+        placeholders = ", ".join("?" for _ in reminder_ids)
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE reminders SET delivery_status = 'delivered', delivered_at = ? WHERE id IN ({placeholders})",
+                (delivered_at, *reminder_ids),
+            )
+            conn.commit()
+            return cursor.rowcount
+
     def mark_synced(self, reminder_id: int, google_event_id: str) -> bool:
         """Atualiza o registro de um lembrete indicando sincronização com o Google Calendar."""
-        with sqlite3.connect(str(self.db_path)) as conn:
+        with closing(sqlite3.connect(str(self.db_path))) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -218,26 +305,40 @@ class GoogleCalendarAdapter:
             minute=minute,
         ), False
 
-    def sync_event(self, message: str, when: Optional[str] = None) -> Dict[str, Any]:
+    def sync_event(
+        self,
+        message: str,
+        when: Optional[str] = None,
+        scheduled_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Cria um evento no Google Calendar."""
         creds = self.get_credentials()
         from googleapiclient.discovery import build
         service = build("calendar", "v3", credentials=creds)
 
-        scheduled_at, all_day = self._parse_when(when)
-        if scheduled_at is None:
-            scheduled_at = datetime.now().astimezone()
+        parsed_scheduled_at: Optional[datetime] = None
+        all_day = False
+        if scheduled_at:
+            try:
+                parsed_scheduled_at = datetime.fromisoformat(scheduled_at)
+                all_day = parsed_scheduled_at.time() == datetime.min.time()
+            except ValueError:
+                parsed_scheduled_at = None
+        if parsed_scheduled_at is None:
+            parsed_scheduled_at, all_day = self._parse_when(when)
+        if parsed_scheduled_at is None:
+            raise ValueError("data/hora do evento não foi resolvida")
 
         event_body = {
             "summary": f"[Rock] {message}",
             "description": f"Lembrete agendado pelo Rock Assistant: {message}\nHorário informado: {when or 'Não especificado'}",
         }
         if all_day:
-            event_body["start"] = {"date": scheduled_at.date().isoformat()}
-            event_body["end"] = {"date": (scheduled_at.date() + timedelta(days=1)).isoformat()}
+            event_body["start"] = {"date": parsed_scheduled_at.date().isoformat()}
+            event_body["end"] = {"date": (parsed_scheduled_at.date() + timedelta(days=1)).isoformat()}
         else:
-            event_body["start"] = {"dateTime": scheduled_at.isoformat()}
-            event_body["end"] = {"dateTime": (scheduled_at + timedelta(minutes=30)).isoformat()}
+            event_body["start"] = {"dateTime": parsed_scheduled_at.isoformat()}
+            event_body["end"] = {"dateTime": (parsed_scheduled_at + timedelta(minutes=30)).isoformat()}
 
         created_event = service.events().insert(calendarId="primary", body=event_body).execute()
         return {
@@ -253,6 +354,7 @@ def create_reminder(
     db_path: Optional[Path | str] = None,
     storage: Optional[SQLiteReminderStorage] = None,
     google_adapter: Optional[GoogleCalendarAdapter] = None,
+    draft: Optional[ReminderDraft] = None,
 ) -> Dict[str, Any]:
     """Cria um lembrete no SQLite local e tenta sincronizar com o Google Calendar.
 
@@ -271,7 +373,7 @@ def create_reminder(
     google_adapter = google_adapter or GoogleCalendarAdapter()
 
     # 1. Salva no SQLite local
-    record = storage.add_reminder(message=cleaned_message, when_time=when)
+    record = storage.add_reminder(message=cleaned_message, when_time=when, draft=draft)
     reminder_id = record["id"]
 
     # 2. Tenta sincronização com Google Calendar
@@ -282,13 +384,20 @@ def create_reminder(
     }
 
     try:
-        if not google_adapter.is_configured():
+        reminder_kind = draft.kind if draft else "calendar_event"
+        if reminder_kind != "calendar_event":
+            google_sync_result["info"] = "Mensagem interna pendente para a próxima inicialização do Rock."
+        elif not google_adapter.is_configured():
             google_sync_result["info"] = (
                 "Lembrete persistido no SQLite local (data/rock.db). "
                 "Para sincronização em nuvem, forneça 'credentials.json' ou 'token.json' do Google Calendar."
             )
         else:
-            sync_res = google_adapter.sync_event(message=cleaned_message, when=when)
+            sync_res = google_adapter.sync_event(
+                message=cleaned_message,
+                when=when,
+                scheduled_at=draft.scheduled_at if draft else None,
+            )
             event_id = sync_res.get("event_id")
             storage.mark_synced(reminder_id, event_id)
             google_sync_result["synced"] = True
@@ -306,6 +415,9 @@ def create_reminder(
         "id": reminder_id,
         "message": record["message"],
         "when": record.get("when_time"),
+        "kind": record.get("kind", draft.kind if draft else "calendar_event"),
+        "importance": record.get("importance", draft.importance if draft else "normal"),
+        "scheduled_at": record.get("scheduled_at", draft.scheduled_at if draft else None),
         "created_at": record.get("created_at"),
         "storage": "sqlite",
         "db_path": str(storage.db_path),

@@ -320,7 +320,7 @@ class IntentParser:
             "Você DEVE responder exclusivamente em formato JSON com duas chaves: 'intent' e 'payload'.\n\n"
             "Estruturas permitidas:\n"
             "- intent 'search' -> payload: {\"query\": \"termo de busca\"}\n"
-            "- intent 'reminder' -> payload: {\"text\": \"descrição da tarefa\", \"when\": \"horário/data ou null\"}\n"
+            "- intent 'reminder' -> payload: {\"text\": \"descrição da tarefa\", \"when\": \"horário/data ou null\", \"kind\": \"calendar_event ou self_message\", \"importance\": \"low, normal, high ou urgent\"}\n"
             "- intent 'command' -> payload: {\"command\": \"comando do sistema operacional\"}\n"
             "- intent 'message' -> payload: {\"target\": \"destinatário ou default\", \"text\": \"conteúdo\"}\n"
             "- intent 'general' -> payload: {\"text\": \"texto completo do usuário\"}\n\n"

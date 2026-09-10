@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-#
+
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
@@ -60,7 +60,7 @@ GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 # Garante que o Router saiba quais chaves padrão esperar de cada intenção
 PAYLOAD_SCHEMAS = {
     "search": ["query"],
-    "reminder": ["text", "when"],
+    "reminder": ["text", "when", "kind", "importance"],
     "command": ["command"],
     "message": ["target", "text"],
     "general": ["text"],

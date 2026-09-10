@@ -14,11 +14,13 @@ if str(BASE_DIR) not in sys.path:
 
 from core.intent_parser import IntentParser
 from core.memory import ConversationMemory
+from core.reminder_interpreter import ReminderInterpreter
 from core.router import Router
 from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
+from core.startup import StartupBriefing
 from tools.messaging import send_message
-from tools.reminders import create_reminder
+from tools.reminders import create_reminder, SQLiteReminderStorage
 from tools.stt import SpeechToText, get_stt
 from tools.system_cmd import run_system_command
 from tools.tts import TextToSpeech, get_tts
@@ -32,14 +34,27 @@ def build_router(
     """Configura as rotas principais da aplicação mapeando intenções e payloads."""
     router = Router()
     specialist_agent = specialist or SpecialistAgent(memory=memory)
+    reminder_interpreter = ReminderInterpreter()
 
     def handle_reminder(payload):
+        draft = reminder_interpreter.interpret(
+            {**payload, "raw_text": payload.get("raw_text", payload.get("text", ""))}
+        )
+        if draft.needs_confirmation:
+            return {
+                "status": "needs_confirmation",
+                "message": f"Preciso confirmar o lembrete: {draft.confirmation_reason}.",
+                "resumo": draft.short_text,
+                "importancia": draft.importance,
+            }
         result = create_reminder(
-            payload.get("text", ""),
-            payload.get("when"),
+            draft.short_text,
+            draft.when,
+            draft=draft,
         )
         if isinstance(result, dict) and str(result.get("status", "")).startswith("created_"):
-            return "Salvo"
+            target = "agenda" if draft.kind == "calendar_event" else "mensagem pendente"
+            return f"Salvo na {target}: {draft.short_text} ({draft.importance})."
         return result
 
     router.register(
@@ -83,17 +98,6 @@ def run_voice_loop(
     specialist: Optional[SpecialistAgent] = None,
 ) -> None:
     """Executa o loop interativo em Modo Voz (Ouvidos com STT e Voz com TTS)."""
-    print("\n" + "/\\" * 60)
-    print(" 🎙️ [MODO VOZ ATIVO] Rock Assistant")
-    print(" Fale no microfone ou diga 'sair' para encerrar.")
-    print(" Diga 'limpar memoria' para reiniciar o contexto.")
-    print("/\\" * 60)
-
-    welcome_msg = "Modo de voz operando. Iniciando dependênciais funcionais."
-    tts.speak(welcome_msg)
-
-    print("✅ Rock pronto.")
-
     mic_available = stt.is_microphone_available()
     if not mic_available:
         print("⚠️ [Aviso] Microfone ou PyAudio não detectado no sistema.")
@@ -148,6 +152,8 @@ def run_voice_loop(
             print(f"📦 Payload extraído: {payload}")
 
         try:
+            if intent == "reminder":
+                payload = {**payload, "raw_text": user_input}
             result = router.route(intent, payload)
             if isinstance(result, str):
                 response_text = result
@@ -176,13 +182,6 @@ def run_text_loop(
     memory: ConversationMemory,
 ) -> None:
     """Executa o loop interativo padrão em Modo Texto."""
-    print("=" * 60)
-    print(" 🎸 Rock Assistant (Fase 3 - Kali Linux)")
-    print(" Digite 'sair', 'exit' ou 'quit' para encerrar.")
-    print(" Digite 'limpar memoria' para reiniciar o histórico.")
-    print(" Use '--voz' ou '-v' para ativar o Modo Voz com STT e TTS.")
-    print("=" * 60)
-
     while True:
         try:
             user_input = input("\nVocê: ").strip()
@@ -220,6 +219,8 @@ def run_text_loop(
             print(f"📦 Payload extraído: {payload}")
 
         try:
+            if intent == "reminder":
+                payload = {**payload, "raw_text": user_input}
             result = router.route(intent, payload)
             print("\n--- [Resultado] ---")
             if isinstance(result, str):
@@ -261,10 +262,12 @@ def main() -> None:
     specialist = SpecialistAgent(memory=memory)
     intent_parser = IntentParser()
     router = build_router(specialist=specialist, memory=memory)
+    briefing = StartupBriefing(storage=SQLiteReminderStorage())
 
     if args.voz:
         tts = get_tts()
         stt = get_stt()
+        briefing.startup_voice(tts, stt)
         run_voice_loop(
             router=router,
             parser=intent_parser,
@@ -274,6 +277,7 @@ def main() -> None:
             specialist=specialist,
         )
     else:
+        briefing.startup_text()
         run_text_loop(
             router=router,
             parser=intent_parser,

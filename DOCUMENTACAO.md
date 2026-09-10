@@ -87,6 +87,14 @@ E o ponto de entrada e o coordenador da aplicacao.
 - `run_voice_loop()` captura fala, processa a intencao e reproduz a resposta.
 - `main()` interpreta `-v`/`--voz`, cria os objetos principais e inicia o loop escolhido.
 
+Ao iniciar, o Rock executa um briefing curto. Mensagens internas pendentes sem horario,
+ou cujo horario ja venceu, sao contadas e ficam disponiveis para entrega. Uma mensagem
+urgente e anunciada antes da saudacao. O usuario pode pedir para saber a origem ou ouvir
+as mensagens; somente ao ouvir o conteudo elas passam para o estado `delivered`.
+
+As saudacoes sao escolhidas aleatoriamente de uma lista fixa em
+`rock_assistant/core/startup.py`. O modo texto e o modo voz usam o mesmo briefing.
+
 Comandos especiais dos dois loops:
 
 - `sair`, `exit` ou `quit`: encerra o programa;
@@ -147,6 +155,10 @@ O agente:
 - trata chave ausente, quota excedida, bloqueio de seguranca e timeout sem derrubar o programa;
 - pode ser usado diretamente pelo `Router` por implementar `__call__()`.
 
+O prompt de sistema identifica explicitamente o Rock como assistente pessoal do usuario,
+orientando respostas em portugues, objetivas, cuidadosas e baseadas no contexto real da
+conversa.
+
 ### `rock_assistant/tools/web_search.py`
 
 Implementa pesquisa externa.
@@ -167,6 +179,8 @@ Gerencia lembretes locais e a possivel sincronizacao com o Google Calendar.
 - se o Google nao estiver configurado, o lembrete continua salvo localmente com status `created_local`;
 - na interface, um lembrete criado com sucesso retorna apenas `Salvo`; detalhes técnicos permanecem no armazenamento e nos logs;
 - `list_reminders()` lista os lembretes mais recentes;
+- `list_pending_messages()` retorna mensagens internas vencidas ou sem horario;
+- `mark_delivered()` registra a entrega depois que o conteudo e apresentado ao usuario;
 - `ReminderTool` e um wrapper orientado a objetos.
 
 O adaptador converte `when` em data e hora efetivas no Google Calendar. Expressões como `amanhã meio dia` ou `amanhã ao meio-dia` criam um evento com `dateTime` às 12:00; quando apenas uma data é informada, como `amanhã`, o evento continua sendo de dia inteiro.
