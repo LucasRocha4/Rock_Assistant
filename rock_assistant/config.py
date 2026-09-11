@@ -55,6 +55,20 @@ GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "512"))
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 
 # ==========================================
+# 2.1 CONFIGURAÇÃO DA WHATSAPP CLOUD API
+# ==========================================
+META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
+META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
+META_PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID", "")
+META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
+META_GRAPH_API_URL = os.getenv(
+    "META_GRAPH_API_URL",
+    f"https://graph.facebook.com/{META_GRAPH_API_VERSION}",
+).rstrip("/")
+META_REQUEST_TIMEOUT = int(os.getenv("META_REQUEST_TIMEOUT", "15"))
+
+# ==========================================
 # 3. MAPEAMENTO DE ESTRUTURA DE PAYLOADS
 # ==========================================
 # Garante que o Router saiba quais chaves padrão esperar de cada intenção
