@@ -96,7 +96,11 @@ class IntentParser:
 
     # Expressões regulares para detecção de intenções
     SEARCH_PATTERN = re.compile(
-        r"^(?:(?:você\s+pode|pode|poderia)\s+)?(?:busca(?:r|r por| por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|google|ddg)\b(?:\s+(.+))?$",
+        r"^(?:(?:você\s+pode|pode|poderia)\s+)?(?:busca(?:r|r por| por|que)?|busque(?: por)?|pesquisa(?:r|r por| por)?|pesquise(?: por)?|procur(?:ar|e|a|ar por)?|procure(?: por)?|google|ddg)\b(?:\s+(.+))?$",
+        re.IGNORECASE,
+    )
+    NATURAL_SEARCH_PATTERN = re.compile(
+        r"^(?:(?:eu\s+)?(?:quero|gostaria|preciso)\s+(?:que\s+)?|(?:eu\s+)?(?:pedi|peço|peco)\s+para\s+)(?:você\s+)?(?:busque|buscar|busca|pesquise|pesquisar|procure|procurar)\s+(.+)$",
         re.IGNORECASE,
     )
 
@@ -107,6 +111,10 @@ class IntentParser:
 
     MESSAGE_KEYWORD = re.compile(
         r"\b(mandar|enviar|mensagem|whatsapp|telegram|msg|notificar)\b",
+        re.IGNORECASE,
+    )
+    EMAIL_KEYWORD = re.compile(
+        r"\b(e-?mails?|correio eletrônico|correio eletronico)\b",
         re.IGNORECASE,
     )
 
@@ -140,9 +148,23 @@ class IntentParser:
 
     def _extract_search_payload(self, text: str) -> Dict[str, str]:
         """Extrai o termo de busca a partir do texto."""
+        explicit_mode = re.match(
+            r"^(?:busca|pesquisa)\s+(em\s+massa|(?:de\s+)?alvo\s+espec[ií]fico)\s*:\s*(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if explicit_mode:
+            mode = "bulk" if "massa" in explicit_mode.group(1).lower() else "target"
+            return {"query": explicit_mode.group(2).strip(), "mode": mode}
+
         # Se for pergunta indireta como 'Você pode pesquisar ...?', preserva texto completo conforme especificado
         if re.match(r"^(?:você\s+pode|pode|poderia)\s+", text, re.IGNORECASE):
             return {"query": text}
+
+        natural_match = self.NATURAL_SEARCH_PATTERN.match(text)
+        if natural_match:
+            query = natural_match.group(1).strip().rstrip("?")
+            return self._add_search_mode(query)
 
         match = self.SEARCH_PATTERN.match(text)
         if match and match.group(1):
@@ -158,7 +180,19 @@ class IntentParser:
 
         # Limpa termos redundantes iniciais como "sobre " ou "por "
         query = re.sub(r"^(?:sobre|por)\s+", "", query, flags=re.IGNORECASE).strip()
-        return {"query": query if query else text}
+        return self._add_search_mode(query if query else text)
+
+    @staticmethod
+    def _add_search_mode(query: str) -> Dict[str, str]:
+        """Preserva buscas antigas e adiciona modo somente quando explícito."""
+        cleaned = query.strip()
+        mass_match = re.match(r"^(?:busca|pesquisa)\s+em\s+massa\s*:?[\s]+(.+)$", cleaned, re.IGNORECASE)
+        if mass_match:
+            return {"query": mass_match.group(1).strip(), "mode": "bulk"}
+        target_match = re.match(r"^(?:busca|pesquisa)\s+(?:de\s+)?alvo\s+espec[ií]fico\s*:?[\s]+(.+)$", cleaned, re.IGNORECASE)
+        if target_match:
+            return {"query": target_match.group(1).strip(), "mode": "target"}
+        return {"query": cleaned}
 
     def _extract_reminder_payload(self, text: str) -> Dict[str, Optional[str]]:
         """Extrai a descrição da tarefa e o horário/data em {'text': ..., 'when': ...}."""
@@ -222,6 +256,64 @@ class IntentParser:
 
         return {"target": "default", "text": text}
 
+    def _extract_email_payload(self, text: str) -> Dict[str, Any]:
+        """Extrai operação e parâmetros de e-mail em um payload estruturado."""
+        normalized = re.sub(r"\be-?mail\b", "email", text, flags=re.IGNORECASE).strip()
+
+        if re.search(r"\b(ativar|ligar|iniciar)\b", normalized, re.IGNORECASE) and re.search(
+            r"\b(monitoramento|monitorar|notifica(?:ção|cao))\b", normalized, re.IGNORECASE
+        ):
+            return {"operation": "monitor", "enabled": True}
+        if re.search(r"\b(desativar|desligar|parar)\b", normalized, re.IGNORECASE) and re.search(
+            r"\b(monitoramento|monitorar|notifica(?:ção|cao))\b", normalized, re.IGNORECASE
+        ):
+            return {"operation": "monitor", "enabled": False}
+
+        reply = re.search(
+            r"\b(?:responder|responda)\s+(?:o\s+)?email\s+(?:de\s+)?([\w-]+)\s*[:,-]?\s*(.*)$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if reply:
+            return {"operation": "reply", "message_id": reply.group(1), "body": reply.group(2).strip()}
+
+        mark_read = re.search(
+            r"\bmar(?:car|que)\s+(?:o\s+)?email\s+([\w-]+)\s+(?:como\s+)?lido\b",
+            normalized,
+            re.IGNORECASE,
+        )
+        if mark_read:
+            return {"operation": "mark_read", "message_id": mark_read.group(1)}
+
+        read = re.search(
+            r"\b(?:ler|leia|abrir|abra)\s+(?:o\s+)?email(?:\s+([\w-]+))?",
+            normalized,
+            re.IGNORECASE,
+        )
+        if read and read.group(1):
+            return {"operation": "read", "message_id": read.group(1)}
+
+        if re.search(r"\b(listar|liste|ver|mostrar|mostre|receber|receba)\b", normalized, re.IGNORECASE):
+            query = "is:unread" if re.search(r"não\s+lidos|nao\s+lidos", normalized, re.IGNORECASE) else ""
+            return {"operation": "list", "query": query}
+
+        send = re.search(
+            r"\b(?:enviar|envie|mandar|mande)\s+email\s+(?:para|pra)\s+([^,;:]+)"
+            r"(?:\s*[,;:]?\s*(?:assunto|subject)\s*[:=-]\s*(.*?))?"
+            r"(?:\s*[,;:]?\s*(?:corpo|mensagem|texto)\s*[:=-]\s*(.*))?$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if send:
+            return {
+                "operation": "send",
+                "to": send.group(1).strip(),
+                "subject": (send.group(2) or "").strip(),
+                "body": (send.group(3) or "").strip(),
+            }
+
+        return {"operation": "list", "query": ""}
+
     def _extract_command_payload(self, text: str) -> Dict[str, str]:
         """Extrai o comando do sistema em {'command': ...}."""
         match = self.COMMAND_PREFIX.match(text)
@@ -263,7 +355,7 @@ class IntentParser:
             }
 
         # 2. Busca na Web
-        if self.SEARCH_PATTERN.match(cleaned_input):
+        if self.SEARCH_PATTERN.match(cleaned_input) or self.NATURAL_SEARCH_PATTERN.match(cleaned_input):
             return {
                 "intent": "search",
                 "payload": self._extract_search_payload(cleaned_input),
@@ -276,21 +368,28 @@ class IntentParser:
                 "payload": self._extract_reminder_payload(cleaned_input),
             }
 
-        # 4. Mensagens
+        # 4. E-mails antes de mensagens, pois "enviar email" também contém "enviar"
+        if self.EMAIL_KEYWORD.search(cleaned_input):
+            return {
+                "intent": "email",
+                "payload": self._extract_email_payload(cleaned_input),
+            }
+
+        # 5. Mensagens
         if self.MESSAGE_KEYWORD.search(cleaned_input):
             return {
                 "intent": "message",
                 "payload": self._extract_message_payload(cleaned_input),
             }
 
-        # 5. Outros Comandos de Sistema / Palavra-chave
+        # 6. Outros Comandos de Sistema / Palavra-chave
         if self.COMMAND_KEYWORD.search(cleaned_input):
             return {
                 "intent": "command",
                 "payload": self._extract_command_payload(cleaned_input),
             }
 
-        # 6. Intenção Geral / Conversação
+        # 7. Intenção Geral / Conversação
         return {
             "intent": "general",
             "payload": {"text": cleaned_input},
@@ -323,11 +422,13 @@ class IntentParser:
             "- intent 'reminder' -> payload: {\"text\": \"descrição da tarefa\", \"when\": \"horário/data ou null\", \"kind\": \"calendar_event ou self_message\", \"importance\": \"low, normal, high ou urgent\"}\n"
             "- intent 'command' -> payload: {\"command\": \"comando do sistema operacional\"}\n"
             "- intent 'message' -> payload: {\"target\": \"destinatário ou default\", \"text\": \"conteúdo\"}\n"
+            "- intent 'email' -> payload: {\"operation\": \"send|list|read|reply|mark_read|monitor\", \"message_id\": \"id opcional\", \"to\": \"destinatário opcional\", \"subject\": \"assunto opcional\", \"body\": \"corpo opcional\", \"query\": \"busca opcional\", \"enabled\": true ou false}\n"
             "- intent 'general' -> payload: {\"text\": \"texto completo do usuário\"}\n\n"
             "Exemplo 1: 'busca tutoriais de nmap' -> {\"intent\": \"search\", \"payload\": {\"query\": \"tutoriais de nmap\"}}\n"
             "Exemplo 2: 'lembrete reunião às 15:00' -> {\"intent\": \"reminder\", \"payload\": {\"text\": \"reunião\", \"when\": \"às 15:00\"}}\n"
             "Exemplo 3: 'exec nmap 127.0.0.1' -> {\"intent\": \"command\", \"payload\": {\"command\": \"nmap 127.0.0.1\"}}\n"
             "Exemplo 4: 'mandar whatsapp para joao tudo certo' -> {\"intent\": \"message\", \"payload\": {\"target\": \"joao\", \"text\": \"tudo certo\"}}\n"
+            "Exemplo 5: 'listar emails não lidos' -> {\"intent\": \"email\", \"payload\": {\"operation\": \"list\", \"query\": \"is:unread\"}}\n"
         )
 
         try:
@@ -358,7 +459,7 @@ class IntentParser:
                 intent = parsed.get("intent")
                 payload = parsed.get("payload")
 
-                valid_intents = {"search", "reminder", "command", "message", "general"}
+                valid_intents = {"search", "reminder", "command", "message", "email", "general"}
                 if intent in valid_intents and isinstance(payload, dict):
                     return {"intent": intent, "payload": payload}
 

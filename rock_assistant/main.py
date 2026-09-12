@@ -20,6 +20,7 @@ from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
 from core.startup import StartupBriefing
 from tools.messaging import send_message
+from tools.email import get_gmail_tool, set_monitoring_enabled
 from tools.reminders import create_reminder, SQLiteReminderStorage
 from tools.stt import SpeechToText, get_stt
 from tools.system_cmd import run_system_command
@@ -59,7 +60,11 @@ def build_router(
 
     router.register(
         "search",
-        lambda payload: search_web(payload.get("query", payload.get("text", ""))),
+        lambda payload: search_web(
+            payload.get("query", payload.get("text", "")),
+            max_results=int(payload.get("max_results", 5)),
+            mode=payload.get("mode"),
+        ),
     )
     router.register(
         "reminder",
@@ -78,6 +83,30 @@ def build_router(
             payload.get("text", ""),
         ),
     )
+
+    def handle_email(payload):
+        tool = get_gmail_tool()
+        operation = payload.get("operation", "list")
+        if operation == "send":
+            return tool.send(payload.get("to", ""), payload.get("subject", ""), payload.get("body", ""))
+        if operation == "list":
+            return tool.list_messages(query=payload.get("query", ""))
+        if operation == "read":
+            return tool.get_message(payload.get("message_id", ""), include_body=True)
+        if operation == "reply":
+            return tool.reply(payload.get("message_id", ""), payload.get("body", ""))
+        if operation == "mark_read":
+            return tool.mark_as_read(payload.get("message_id", ""))
+        if operation == "monitor":
+            enabled = set_monitoring_enabled(payload.get("enabled", False))
+            return {
+                "status": "updated",
+                "monitoring_enabled": enabled,
+                "message": "Monitoramento contínuo configurado; a consulta automática será adicionada na próxima etapa.",
+            }
+        raise ValueError(f"Operação de e-mail desconhecida: {operation}")
+
+    router.register("email", handle_email)
     router.register(
         "general",
         lambda payload: specialist_agent.chat(

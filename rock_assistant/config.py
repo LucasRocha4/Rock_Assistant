@@ -73,12 +73,26 @@ META_REQUEST_TIMEOUT = int(os.getenv("META_REQUEST_TIMEOUT", "15"))
 # ==========================================
 # Garante que o Router saiba quais chaves padrão esperar de cada intenção
 PAYLOAD_SCHEMAS = {
-    "search": ["query"],
+    "search": ["query", "mode", "max_results"],
     "reminder": ["text", "when", "kind", "importance"],
     "command": ["command"],
     "message": ["target", "text"],
+    "email": ["operation", "message_id", "to", "subject", "body", "query"],
     "general": ["text"],
 }
+
+# ==========================================
+# 3.1 LIMITES DA BUSCA WEB
+# ==========================================
+SEARCH_INITIAL_TIMEOUT = float(os.getenv("SEARCH_INITIAL_TIMEOUT", "7"))
+SEARCH_DEADLINE = float(os.getenv("SEARCH_DEADLINE", "200"))
+SEARCH_SCALE_INTERVAL = float(os.getenv("SEARCH_SCALE_INTERVAL", "15"))
+SEARCH_TARGET_INITIAL_WORKERS = int(os.getenv("SEARCH_TARGET_INITIAL_WORKERS", "5"))
+SEARCH_MAX_WORKERS = int(os.getenv("SEARCH_MAX_WORKERS", "20"))
+SEARCH_BULK_WORKERS = int(os.getenv("SEARCH_BULK_WORKERS", "10"))
+SEARCH_HTTP_TIMEOUT = float(os.getenv("SEARCH_HTTP_TIMEOUT", "8"))
+SEARCH_ENRICH_RESULTS = os.getenv("SEARCH_ENRICH_RESULTS", "False").lower() in {"true", "1", "yes"}
+SEARCH_ALLOW_DYNAMIC = os.getenv("SEARCH_ALLOW_DYNAMIC", "False").lower() in {"true", "1", "yes"}
 
 # ==========================================
 # 4. PERSISTÊNCIA E INTEGRAÇÕES EXTERNAS
@@ -91,6 +105,24 @@ MAX_MEMORY_MESSAGES = int(os.getenv("MAX_MEMORY_MESSAGES", "7"))
 
 GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 GOOGLE_TOKEN_FILE = DATA_DIR / "token.json"
+GMAIL_TOKEN_FILE = Path(os.getenv("GMAIL_TOKEN_FILE", str(DATA_DIR / "gmail_token.json")))
+if not GMAIL_TOKEN_FILE.is_absolute():
+    GMAIL_TOKEN_FILE = PROJECT_ROOT / GMAIL_TOKEN_FILE
+GMAIL_SCOPES = [
+    scope.strip()
+    for scope in os.getenv(
+        "GMAIL_SCOPES",
+        "https://www.googleapis.com/auth/gmail.modify",
+    ).split(",")
+    if scope.strip()
+]
+GMAIL_MONITORING_ENABLED = os.getenv("GMAIL_MONITORING_ENABLED", "False").lower() in {
+    "true",
+    "1",
+    "yes",
+}
+GMAIL_MAX_MESSAGES = int(os.getenv("GMAIL_MAX_MESSAGES", "10"))
+GMAIL_USER_ID = os.getenv("GMAIL_USER_ID", "me")
 # ==========================================
 # 5. CONFIGURAÇÃO DE ÁUDIO E VOZ (FASE 3)
 # ==========================================

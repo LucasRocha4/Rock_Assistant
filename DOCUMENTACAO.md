@@ -165,6 +165,14 @@ Implementa pesquisa externa.
 
 `search_web_raw()` tenta, nesta ordem, DuckDuckGo via `DDGS`, uma query simplificada, a API Instant Answer do DuckDuckGo e a API de resumo da Wikipedia em portugues. Retorna uma lista estruturada com titulo, URL e resumo.
 
+`search_web_structured()` coordena a busca com uma tentativa inicial de 7 segundos,
+workers limitados e deadline global configuravel de 200 segundos. O modo `target`
+pode escalar de 5 para 10 e 20 workers; o modo `bulk` usa o adaptador Scrapy com
+ate 10 requisicoes concorrentes. O HTML pode ser enriquecido com `requests` e
+BeautifulSoup; tabelas sao convertidas com `pandas.read_html` quando disponivel.
+Os modos explicitos aceitos pelo parser sao `busca alvo especifico: ...` e
+`busca em massa: ...`.
+
 `search_web()` transforma essa lista em texto formatado para exibir no terminal. `WebSearchTool` oferece a mesma funcionalidade em formato orientado a objetos.
 
 A ferramenta depende de acesso a internet para obter resultados reais.
@@ -283,6 +291,8 @@ As dependencias estao em `requirements.txt`. As mais importantes sao:
 - `google-genai`: SDK oficial para comunicacao com a API Google Gemini;
 - `requests`: comunicacao HTTP com APIs web;
 - `duckduckgo-search`/`ddgs`: pesquisa DuckDuckGo;
+- `beautifulsoup4`, `pandas`, `lxml`: leitura de HTML e tabelas;
+- `Scrapy`: crawling controlado para buscas em massa;
 - bibliotecas `google-api-python-client`, `google-auth-*`: OAuth2 e Google Calendar;
 - `SpeechRecognition` e `openai-whisper`: reconhecimento de voz;
 - `pyttsx3` e `gTTS`: sintese de voz.
