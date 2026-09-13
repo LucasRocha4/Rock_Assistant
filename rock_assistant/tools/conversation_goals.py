@@ -135,6 +135,50 @@ class ConversationGoalStore:
             ).fetchone()
         return self._row_to_dict(updated)
 
+    def update_collected_facts(self, goal_id: int, facts: Dict[str, Any]) -> Dict[str, Any]:
+        """Mescla fatos novos (não nulos) no contexto do objetivo."""
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(str(self.db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM conversation_goals WHERE id = ?", (goal_id,)
+            ).fetchone()
+            if not row:
+                raise ValueError(f"Objetivo inexistente: {goal_id}")
+            context = json.loads(row["context_json"])
+            collected = context.setdefault("collected_facts", {})
+            for key, value in (facts or {}).items():
+                if value is not None and str(value).strip():
+                    collected[key] = value
+            connection.execute(
+                "UPDATE conversation_goals SET context_json = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(context, ensure_ascii=False), now, goal_id),
+            )
+            connection.commit()
+            updated = connection.execute(
+                "SELECT * FROM conversation_goals WHERE id = ?", (goal_id,)
+            ).fetchone()
+        return self._row_to_dict(updated)
+
+    def mark_completed(self, goal_id: int) -> Dict[str, Any]:
+        """Marca o objetivo como concluido, encerrando a conversa ativa."""
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(str(self.db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            connection.execute(
+                """
+                UPDATE conversation_goals
+                SET status = 'completed', current_step = 'done', updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (now, now, goal_id),
+            )
+            connection.commit()
+            updated = connection.execute(
+                "SELECT * FROM conversation_goals WHERE id = ?", (goal_id,)
+            ).fetchone()
+        return self._row_to_dict(updated)
+
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
         result = dict(row)

@@ -12,6 +12,7 @@ from rock_assistant.core.intent_parser import IntentParser
 from rock_assistant.core.memory import ConversationMemory
 from rock_assistant.core.conversation_manager import ConversationManager
 from rock_assistant.main import build_router
+from rock_assistant.tools.conversation_goals import ConversationGoalStore
 from rock_assistant.tools.messaging import send_whatsapp_message
 
 logger = logging.getLogger(__name__)
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Rock Assistant WhatsApp Webhook (Evolution API)")
 parser = IntentParser()
 memory = ConversationMemory()
-router = build_router(memory=memory)
-conversation_manager = ConversationManager(parser=parser, router=router)
+goal_store = ConversationGoalStore()
+router = build_router(memory=memory, goal_store=goal_store)
+conversation_manager = ConversationManager(parser=parser, router=router, goal_store=goal_store)
 
 
 def _clean_phone_number(remote_jid: str) -> str:

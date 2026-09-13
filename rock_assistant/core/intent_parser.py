@@ -117,7 +117,18 @@ class IntentParser:
         r"\b(pergunte|pergunta|confirme|confirmar|verifique|entre\s+em\s+contato)\b",
         re.IGNORECASE,
     )
-    CONTACT_KEYWORD = re.compile(r"\b(cadastre|cadastrar|salve|salvar|adicione|adicionar)\s+(?:o\s+)?contato\b", re.IGNORECASE)
+    # "mande mensagem para X perguntando/confirmando Y" também inicia um objetivo, não um envio único
+    GOAL_VIA_MESSAGE = re.compile(
+        r"^(?:mande|manda|mandar|envie|enviar)\s+(?:uma\s+)?mensagem\s+(?:para|pra|pro)\s+"
+        r"(?:(?:o|a|os|as)\s+)?([^\s,]+)\s+(?:perguntando|confirmando)\s+(.+)$",
+        re.IGNORECASE,
+    )
+    # Ancorado ao início para não confundir perguntas/afirmações ("você salvou o contato?") com comandos
+    CONTACT_KEYWORD = re.compile(r"^\s*(cadastre|cadastrar|salve|salvar|adicione|adicionar)\s+(?:o\s+)?contato\b", re.IGNORECASE)
+    LIST_CONTACTS_KEYWORD = re.compile(
+        r"\b(liste|listar|lista|mostre|mostrar|quais)\b.*\b(contatos?|contacts)\b",
+        re.IGNORECASE,
+    )
     EMAIL_KEYWORD = re.compile(
         r"\b(e-?mails?|correio eletrônico|correio eletronico)\b",
         re.IGNORECASE,
@@ -288,7 +299,7 @@ class IntentParser:
         match = re.match(
             r"^(?:pergunte|pergunta|confirme|confirmar|verifique)\s+"
             r"(?:(?:ao|a|com|para)\s+([^\s:,]+)\s+)?"
-            r"(?:sobre|do|da|se)\s+(.+)$",
+            r"(?:(?:sobre|do|da|se)\s+)?(.+)$",
             text,
             re.IGNORECASE,
         )
@@ -316,20 +327,44 @@ class IntentParser:
         }
 
     def _extract_contact_payload(self, text: str) -> Dict[str, Optional[str]]:
-        """Extrai nome, numero e campos opcionais de um cadastro simples."""
-        match = re.search(
-            r"contato\s+(?P<name>[^,;]+?)\s*[,;]\s*"
-            r"(?:numero|número|telefone|celular)\s*[:=]?\s*(?P<number>\+?[\d\s().-]+)"
-            r"(?:\s*[,;]\s*(?:chamada|apelido|contact_call)\s*[:=]?\s*(?P<call>[^,;]+))?",
-            text,
-            re.IGNORECASE,
-        )
+        """Extrai nome, numero e campos opcionais de um cadastro simples.
+        Suporta variações de formato, com número e chamada sendo opcionais.
+        """
+        # Encontra a seção após "contato"
+        match = re.search(r"contato\s+(.+?)(?:\s*$|$)", text, re.IGNORECASE | re.DOTALL)
         if not match:
             return {"contact_name": None, "contact_number": None, "contact_call": None}
+        
+        contact_section = match.group(1).strip()
+        
+        # Tenta extrair componentes
+        name = None
+        number = None
+        call = None
+        
+        # Procura por "número" ou "número:" ou "telefone"
+        num_match = re.search(r"(?:numero|número|telefone|celular)\s*[:=]?\s*(\+?[\d\s().-]+?)(?:\s*[,;]|$)", contact_section, re.IGNORECASE)
+        if num_match:
+            number = re.sub(r"[\s().-]", "", num_match.group(1).strip())
+            # Remover a seção do número para extrair nome
+            contact_section = contact_section[:num_match.start()] + contact_section[num_match.end():]
+        
+        # Procura por "chamada", "apelido", etc.
+        call_match = re.search(r"(?:chamada|apelido|contact_call)\s*[:=]?\s*([^,;]+?)(?:\s*[,;]|$)", contact_section, re.IGNORECASE)
+        if call_match:
+            call = call_match.group(1).strip()
+            # Remover a seção da chamada
+            contact_section = contact_section[:call_match.start()] + contact_section[call_match.end():]
+        
+        # O que sobra é o nome
+        name = contact_section.replace(",", "").replace(";", "").strip()
+        if not name:
+            name = None
+        
         return {
-            "contact_name": match.group("name").strip(),
-            "contact_number": match.group("number").strip(),
-            "contact_call": match.group("call").strip() if match.group("call") else None,
+            "contact_name": name,
+            "contact_number": number,
+            "contact_call": call,
         }
 
     def _extract_email_payload(self, text: str) -> Dict[str, Any]:
@@ -485,9 +520,13 @@ class IntentParser:
                 "payload": self._extract_email_payload(cleaned_input),
             }
 
-        # 5. Cadastro explícito de contato
-        if self.CONTACT_KEYWORD.search(cleaned_input):
+        # 5. Cadastro explícito de contato (comando imperativo, não uma pergunta)
+        if self.CONTACT_KEYWORD.match(cleaned_input) and not cleaned_input.rstrip().endswith("?"):
             return {"intent": "contact", "payload": self._extract_contact_payload(cleaned_input)}
+
+        # 5.1 Listagem de contatos: consulta real ao banco, nunca alucinada pelo LLM
+        if self.LIST_CONTACTS_KEYWORD.search(cleaned_input):
+            return {"intent": "list_contacts", "payload": {}}
 
         # 6. Objetivos conversacionais explícitos
         if self.GOAL_KEYWORD.search(cleaned_input):
@@ -496,6 +535,28 @@ class IntentParser:
                 return {
                     "intent": "goal",
                     "payload": goal_payload,
+                }
+
+        # 6.1 "mande mensagem para X perguntando Y" também é um objetivo quando Y fala de um evento
+        # (mantém a conversa até coletar local/horário/o que levar); perguntas casuais seguem como mensagem simples
+        goal_via_message = self.GOAL_VIA_MESSAGE.match(cleaned_input)
+        if goal_via_message:
+            target = goal_via_message.group(1).strip()
+            event_description = goal_via_message.group(2).strip()
+            day_match = re.search(
+                r"\b(neste|nesse|no|na)?\s*(sábado|sabado|domingo|segunda-feira|segunda)\b",
+                event_description,
+                re.IGNORECASE,
+            )
+            is_event = day_match or re.search(r"\b(rolê|role|churrasco|evento|festa)\b", event_description, re.IGNORECASE)
+            if is_event:
+                return {
+                    "intent": "goal",
+                    "payload": {
+                        "target": target,
+                        "event_description": event_description,
+                        "event_day": day_match.group(0).strip() if day_match else None,
+                    },
                 }
 
         # 7. Mensagens

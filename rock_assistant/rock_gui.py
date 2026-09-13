@@ -32,6 +32,7 @@ from core.intent_parser import IntentParser
 from core.memory import ConversationMemory
 from main import build_router
 from tools.reminders import SQLiteReminderStorage
+import config
 
 
 def _normalize_response(result: Any) -> str:
@@ -69,6 +70,8 @@ class PipelineWorker(QThread):
             parsed = self.parser.parse_with_llm(self.user_input)
             intent = parsed.get("intent")
             payload = parsed.get("payload", {}) or {}
+            if intent == "goal" and config.OWNER_PHONE:
+                payload = {**payload, "owner_phone": config.OWNER_PHONE}
             self.intent_parsed.emit(str(intent), payload)
 
             result = self.router.route(intent, payload)

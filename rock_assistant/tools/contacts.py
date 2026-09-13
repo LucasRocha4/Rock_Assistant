@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from rock_assistant.config import DB_PATH
 
@@ -82,6 +82,20 @@ def add_contact(
             "SELECT * FROM contacts WHERE id = ?", (contact_id,)
         ).fetchone()
     return dict(row)
+
+
+def list_contacts(db_path: Path | str = DB_PATH) -> List[Dict[str, Any]]:
+    """Retorna todos os contatos gravados no banco, direto do SQLite (sem inferência de LLM)."""
+    path = Path(db_path)
+    if not path.exists():
+        return []
+    with sqlite3.connect(str(path)) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT id, contact_name, contact_number, contact_description, contact_email, contact_call "
+            "FROM contacts ORDER BY id"
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def resolve_contact(name: str, db_path: Path) -> Optional[str]:

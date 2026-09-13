@@ -23,7 +23,7 @@ from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
 from core.startup import StartupBriefing
 from rock_assistant import config
-from tools.contacts import add_contact, initialize_contacts_db, is_phone_number, normalize_phone, resolve_contact
+from tools.contacts import add_contact, initialize_contacts_db, is_phone_number, list_contacts, normalize_phone, resolve_contact
 from tools.conversation_goals import ConversationGoalStore
 from tools.messaging import send_whatsapp_message
 from tools.email import get_email_delegation_manager, get_gmail_tool, set_monitoring_enabled
@@ -136,6 +136,22 @@ def build_router(
         }
 
     router.register("contact", handle_contact)
+
+    def handle_list_contacts(payload):
+        contacts = list_contacts()
+        if not contacts:
+            return {"status": "empty", "message": "Nenhum contato cadastrado no rock.db ainda."}
+        lines = [
+            f"- {c['contact_name']} | {c['contact_number']}" + (f" | chamada: {c['contact_call']}" if c.get("contact_call") else "")
+            for c in contacts
+        ]
+        return {
+            "status": "ok",
+            "contacts": contacts,
+            "message": "Contatos cadastrados no rock.db:\n" + "\n".join(lines),
+        }
+
+    router.register("list_contacts", handle_list_contacts)
 
     def handle_goal(payload):
         target = str(payload.get("target") or "").strip()
