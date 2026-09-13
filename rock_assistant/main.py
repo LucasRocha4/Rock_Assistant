@@ -20,7 +20,7 @@ from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
 from core.startup import StartupBriefing
 from tools.messaging import send_message
-from tools.email import get_gmail_tool, set_monitoring_enabled
+from tools.email import get_email_delegation_manager, get_gmail_tool, set_monitoring_enabled
 from tools.reminders import create_reminder, SQLiteReminderStorage
 from tools.stt import SpeechToText, get_stt
 from tools.system_cmd import run_system_command
@@ -89,6 +89,12 @@ def build_router(
         operation = payload.get("operation", "list")
         if operation == "send":
             return tool.send(payload.get("to", ""), payload.get("subject", ""), payload.get("body", ""))
+        if operation == "delegate":
+            return get_email_delegation_manager().delegate(
+                payload.get("to", ""),
+                payload.get("subject", ""),
+                payload.get("body", ""),
+            )
         if operation == "list":
             return tool.list_messages(query=payload.get("query", ""))
         if operation == "read":
@@ -118,6 +124,18 @@ def build_router(
     return router
 
 
+def poll_email_delegations() -> list[dict]:
+    """Consulta respostas dos assuntos delegados sem bloquear quando não há tarefas."""
+    try:
+        manager = get_email_delegation_manager()
+        if not manager.delegations:
+            return []
+        return manager.poll()
+    except Exception as exc:
+        print(f"⚠️ Não foi possível verificar respostas de e-mail: {exc}")
+        return []
+
+
 def run_voice_loop(
     router: Router,
     parser: IntentParser,
@@ -133,6 +151,9 @@ def run_voice_loop(
         print("💡 Para digitar no terminal com resposta em áudio falado (TTS), prossiga abaixo.")
 
     while True:
+        for notice in poll_email_delegations():
+            print(f"\n📨 {notice['message']}")
+            tts.speak(notice["message"])
         try:
             if mic_available:
                 print("\n🎧 Rock escutando... (fale agora)")
@@ -212,6 +233,8 @@ def run_text_loop(
 ) -> None:
     """Executa o loop interativo padrão em Modo Texto."""
     while True:
+        for notice in poll_email_delegations():
+            print(f"\n📨 {notice['message']}")
         try:
             user_input = input("\nVocê: ").strip()
         except (KeyboardInterrupt, EOFError):

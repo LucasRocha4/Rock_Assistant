@@ -59,7 +59,10 @@ GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 # ==========================================
 META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
-META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
+META_ACCESS_TOKEN = os.getenv(
+    "PERMA_META_ACCESS_TOKEN",
+    os.getenv("META_ACCESS_TOKEN", ""),
+)
 META_PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID", "")
 META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
 META_GRAPH_API_URL = os.getenv(
@@ -123,6 +126,11 @@ GMAIL_MONITORING_ENABLED = os.getenv("GMAIL_MONITORING_ENABLED", "False").lower(
 }
 GMAIL_MAX_MESSAGES = int(os.getenv("GMAIL_MAX_MESSAGES", "10"))
 GMAIL_USER_ID = os.getenv("GMAIL_USER_ID", "me")
+GMAIL_DELEGATIONS_FILE = Path(
+    os.getenv("GMAIL_DELEGATIONS_FILE", str(DATA_DIR / "gmail_delegations.json"))
+)
+if not GMAIL_DELEGATIONS_FILE.is_absolute():
+    GMAIL_DELEGATIONS_FILE = PROJECT_ROOT / GMAIL_DELEGATIONS_FILE
 # ==========================================
 # 5. CONFIGURAÇÃO DE ÁUDIO E VOZ (FASE 3)
 # ==========================================

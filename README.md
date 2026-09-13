@@ -52,8 +52,18 @@ GMAIL_MONITORING_ENABLED=False
 ```
 
 Exemplos de comandos: `enviar email para pessoa@example.com, assunto: Oi,
-corpo: Tudo bem?`, `listar emails não lidos`, `ler email ID`, `responder email
-ID: texto` e `marcar email ID como lido`. O monitoramento contínuo permanece
-desativado por padrão; nesta etapa, ativá-lo apenas registra a preferência e o
-polling automático ainda não está conectado.
+corpo: Tudo bem?`, `envie email para pessoa@example.com para tratar da reunião
+de amanhã`, `listar emails não lidos`, `ler email ID`, `responder email ID:
+texto` e `marcar email ID como lido`.
+
+Um pedido com `para tratar de`, `por mim`, `tome as rédeas`, `acompanhe` ou
+`aguarde retorno` vira uma delegação: o Rock envia o primeiro contato, salva o
+assunto e o thread do Gmail e verifica respostas nos próximos ciclos do
+assistente. Quando chega uma resposta, ele informa você e aguarda uma decisão;
+não responde nem negocia sozinho. O arquivo de estado é
+`rock_assistant/data/gmail_delegations.json`.
+
+O monitoramento contínuo geral permanece desativado por padrão. A delegação
+ativa seu acompanhamento próprio enquanto o assistente estiver em execução;
+uma consulta pode ocorrer no início de cada novo ciclo de interação.
 >>>>>>> 8a29f95 (Melhora do sistema de busca v1.1.)

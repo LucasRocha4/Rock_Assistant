@@ -298,18 +298,52 @@ class IntentParser:
             return {"operation": "list", "query": query}
 
         send = re.search(
-            r"\b(?:enviar|envie|mandar|mande)\s+email\s+(?:para|pra)\s+([^,;:]+)"
+            r"\b(?:enviar|envia|envie|mandar|manda|mande)\s+email\s+(?:para|pra)\s+([^\s,;:]+)"
+            r"\s+(?:e\s+)?(?:vê|ve|veja|verifique|confirme)\s+se\s+(.+)$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if send:
+            question = send.group(2).strip().rstrip("?.!")
+            subject = question[0].upper() + question[1:] if question else "Confirmação"
+            return {
+                "operation": "delegate",
+                "to": send.group(1).strip(),
+                "subject": subject,
+                "body": f"Olá, poderia confirmar se {question}?",
+            }
+
+        send = re.search(
+            r"\b(?:enviar|envia|envie|mandar|manda|mande)\s+email\s+(?:para|pra)\s+([^\s,;:]+)"
+            r"(?:\s+(?:para|sobre|a respeito de)\s+(.+))?"
             r"(?:\s*[,;:]?\s*(?:assunto|subject)\s*[:=-]\s*(.*?))?"
             r"(?:\s*[,;:]?\s*(?:corpo|mensagem|texto)\s*[:=-]\s*(.*))?$",
             normalized,
             re.IGNORECASE,
         )
         if send:
+            topic = (send.group(2) or "").strip()
+            subject = (send.group(3) or "").strip()
+            body = (send.group(4) or "").strip()
+            autonomous = bool(
+                re.search(
+                    r"\b(tome as rédeas|toma as rédeas|assuma|por mim|acompanhe|aguarde retorno|resolva)\b",
+                    normalized,
+                    re.IGNORECASE,
+                )
+            )
+            autonomous = autonomous or bool(
+                re.match(r"tratar\s+(?:de|da|do|das|dos)\b", topic, re.IGNORECASE)
+            )
+            if topic and not subject:
+                subject = topic[0].upper() + topic[1:]
+            if topic and not body:
+                body = f"Olá, gostaria de {topic}."
             return {
-                "operation": "send",
+                "operation": "delegate" if autonomous else "send",
                 "to": send.group(1).strip(),
-                "subject": (send.group(2) or "").strip(),
-                "body": (send.group(3) or "").strip(),
+                "subject": subject,
+                "body": body,
             }
 
         return {"operation": "list", "query": ""}
@@ -422,13 +456,14 @@ class IntentParser:
             "- intent 'reminder' -> payload: {\"text\": \"descrição da tarefa\", \"when\": \"horário/data ou null\", \"kind\": \"calendar_event ou self_message\", \"importance\": \"low, normal, high ou urgent\"}\n"
             "- intent 'command' -> payload: {\"command\": \"comando do sistema operacional\"}\n"
             "- intent 'message' -> payload: {\"target\": \"destinatário ou default\", \"text\": \"conteúdo\"}\n"
-            "- intent 'email' -> payload: {\"operation\": \"send|list|read|reply|mark_read|monitor\", \"message_id\": \"id opcional\", \"to\": \"destinatário opcional\", \"subject\": \"assunto opcional\", \"body\": \"corpo opcional\", \"query\": \"busca opcional\", \"enabled\": true ou false}\n"
+            "- intent 'email' -> payload: {\"operation\": \"send|delegate|list|read|reply|mark_read|monitor\", \"message_id\": \"id opcional\", \"to\": \"destinatário opcional\", \"subject\": \"assunto opcional\", \"body\": \"corpo opcional\", \"query\": \"busca opcional\", \"enabled\": true ou false}\n"
             "- intent 'general' -> payload: {\"text\": \"texto completo do usuário\"}\n\n"
             "Exemplo 1: 'busca tutoriais de nmap' -> {\"intent\": \"search\", \"payload\": {\"query\": \"tutoriais de nmap\"}}\n"
             "Exemplo 2: 'lembrete reunião às 15:00' -> {\"intent\": \"reminder\", \"payload\": {\"text\": \"reunião\", \"when\": \"às 15:00\"}}\n"
             "Exemplo 3: 'exec nmap 127.0.0.1' -> {\"intent\": \"command\", \"payload\": {\"command\": \"nmap 127.0.0.1\"}}\n"
             "Exemplo 4: 'mandar whatsapp para joao tudo certo' -> {\"intent\": \"message\", \"payload\": {\"target\": \"joao\", \"text\": \"tudo certo\"}}\n"
             "Exemplo 5: 'listar emails não lidos' -> {\"intent\": \"email\", \"payload\": {\"operation\": \"list\", \"query\": \"is:unread\"}}\n"
+            "Exemplo 6: 'envia email para ana@example.com e vê se a reunião está confirmada' -> {\"intent\": \"email\", \"payload\": {\"operation\": \"delegate\", \"to\": \"ana@example.com\", \"subject\": \"A reunião está confirmada\", \"body\": \"Olá, poderia confirmar se a reunião está confirmada?\"}}\n"
         )
 
         try:

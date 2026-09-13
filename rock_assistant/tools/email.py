@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import mimetypes
+import uuid
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any, Dict, Iterable, Optional
 
@@ -74,7 +77,10 @@ class GmailTool:
         response = self._get_service().users().messages().send(
             userId=self.user_id, body={"raw": raw}
         ).execute()
-        return {"status": "sent", "message_id": response.get("id")}
+        result = {"status": "sent", "message_id": response.get("id")}
+        if response.get("threadId"):
+            result["thread_id"] = response["threadId"]
+        return result
 
     def list_messages(
         self,
@@ -142,7 +148,10 @@ class GmailTool:
             userId=self.user_id,
             body={"raw": raw, "threadId": original.get("thread_id")},
         ).execute()
-        return {"status": "sent", "message_id": response.get("id")}
+        result = {"status": "sent", "message_id": response.get("id")}
+        if response.get("threadId"):
+            result["thread_id"] = response["threadId"]
+        return result
 
     @staticmethod
     def _reply_subject(subject: str) -> str:
@@ -163,6 +172,7 @@ class GmailTool:
             "from": headers.get("from", ""),
             "to": headers.get("to", ""),
             "date": headers.get("date", ""),
+            "message_id_header": headers.get("message-id", ""),
             "attachments": self._attachments(message.get("payload", {})),
         }
         if include_body or "message-id" in headers:
@@ -235,3 +245,93 @@ def set_monitoring_enabled(enabled: bool) -> bool:
 
 def is_monitoring_enabled() -> bool:
     return _monitoring_enabled
+
+
+class EmailDelegationManager:
+    """Persiste assuntos delegados e identifica respostas sem responder sozinho."""
+
+    def __init__(self, tool: Optional[GmailTool] = None, file_path: Optional[Any] = None) -> None:
+        self.tool = tool or get_gmail_tool()
+        self.file_path = file_path or config.GMAIL_DELEGATIONS_FILE
+        self.delegations = self._load()
+
+    def _load(self) -> list[Dict[str, Any]]:
+        try:
+            if self.file_path.exists():
+                data = json.loads(self.file_path.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return [item for item in data if isinstance(item, dict)]
+        except (OSError, ValueError):
+            pass
+        return []
+
+    def _save(self) -> None:
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.file_path.write_text(
+            json.dumps(self.delegations, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def delegate(self, to: str, subject: str, body: str) -> Dict[str, Any]:
+        result = self.tool.send(to, subject, body)
+        delegation = {
+            "id": uuid.uuid4().hex,
+            "to": to,
+            "subject": subject,
+            "message_id": result.get("message_id"),
+            "thread_id": result.get("thread_id"),
+            "seen_message_ids": [result.get("message_id")],
+            "status": "waiting_for_reply",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.delegations.append(delegation)
+        self._save()
+        return {
+            "status": "delegated",
+            "delegation_id": delegation["id"],
+            "message_id": result.get("message_id"),
+            "message": f"Enviei o e-mail para {to} e vou acompanhar o retorno sobre “{subject}”.",
+        }
+
+    def poll(self) -> list[Dict[str, Any]]:
+        notices = []
+        changed = False
+        for delegation in self.delegations:
+            if delegation.get("status") != "waiting_for_reply":
+                continue
+            query = f"thread:{delegation['thread_id']}" if delegation.get("thread_id") else (
+                f"from:{delegation['to']} subject:\"{delegation['subject']}\""
+            )
+            result = self.tool.list_messages(query=query, max_results=config.GMAIL_MAX_MESSAGES)
+            for message in result.get("messages", []):
+                message_id = message.get("id")
+                if not message_id or message_id in delegation.get("seen_message_ids", []):
+                    continue
+                delegation.setdefault("seen_message_ids", []).append(message_id)
+                changed = True
+                delegation["status"] = "reply_received"
+                notices.append(
+                    {
+                        "delegation_id": delegation["id"],
+                        "message_id": message_id,
+                        "from": message.get("from", ""),
+                        "subject": message.get("subject", delegation.get("subject", "")),
+                        "message": (
+                            f"Recebi uma resposta de {message.get('from', 'um contato')} "
+                            f"sobre “{delegation.get('subject', '')}”. "
+                            "Leia a mensagem e me diga se devo responder ou tomar outra decisão."
+                        ),
+                    }
+                )
+        if changed:
+            self._save()
+        return notices
+
+
+_delegation_manager: Optional[EmailDelegationManager] = None
+
+
+def get_email_delegation_manager() -> EmailDelegationManager:
+    global _delegation_manager
+    if _delegation_manager is None:
+        _delegation_manager = EmailDelegationManager()
+    return _delegation_manager
