@@ -55,10 +55,12 @@ def send_whatsapp_message(
         "Content-Type": "application/json",
     }
     payload = {
-        {
         "number": phone_number,
-        "text": message,
+        "options": {
+            "delay": delay,
+            "presence": presence,
         },
+        "text": message,
     }
 
     try:
