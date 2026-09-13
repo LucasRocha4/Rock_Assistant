@@ -110,9 +110,14 @@ class IntentParser:
     )
 
     MESSAGE_KEYWORD = re.compile(
-        r"\b(mandar|enviar|mensagem|whatsapp|telegram|msg|notificar)\b",
+        r"\b(mandar|enviar|mensagem|whatsapp|telegram|msg|notificar|fale?\s+com|avise?)\b",
         re.IGNORECASE,
     )
+    GOAL_KEYWORD = re.compile(
+        r"\b(pergunte|pergunta|confirme|confirmar|verifique|entre\s+em\s+contato)\b",
+        re.IGNORECASE,
+    )
+    CONTACT_KEYWORD = re.compile(r"\b(cadastre|cadastrar|salve|salvar|adicione|adicionar)\s+(?:o\s+)?contato\b", re.IGNORECASE)
     EMAIL_KEYWORD = re.compile(
         r"\b(e-?mails?|correio eletrônico|correio eletronico)\b",
         re.IGNORECASE,
@@ -232,9 +237,31 @@ class IntentParser:
 
     def _extract_message_payload(self, text: str) -> Dict[str, str]:
         """Extrai destino e conteúdo em {'target': ..., 'text': ...}."""
-        # Padrão com destinatário explícito: mandar/enviar [mensagem] para <target>[:,-]? <text>
+        direct_match = re.match(
+            r"^(?:fale?|converse)\s+com\s+([^\s:,]+)\s*(?:dizendo|falando|que)?\s*[:,-]?\s*(.*)$",
+            text,
+            re.IGNORECASE,
+        )
+        if direct_match:
+            return {
+                "target": direct_match.group(1).strip(),
+                "text": direct_match.group(2).strip() or text,
+            }
+
+        notify_match = re.match(
+            r"^avise\s+([^\s:,]+)\s+(?:que\s+)?(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if notify_match:
+            return {
+                "target": notify_match.group(1).strip(),
+                "text": notify_match.group(2).strip(),
+            }
+
+        # Padrao com destinatario explicito: enviar [uma] [mensagem] [no whatsapp] para <target> <text>
         match_target = re.match(
-            r"^(?:mandar|enviar|notificar)?\s*(?:mensagem|msg|whatsapp|telegram)?\s*(?:para|pra|pro)\s+([^\s:,]+)\s*[:,-]?\s*(.*)$",
+            r"^(?:(?:mandar|enviar|envia|envie|manda|mande|notificar)\s+)?(?:uma\s+)?(?:mensagem|msg|whatsapp|telegram)?\s*(?:no\s+whatsapp\s+)?(?:para|pra|pro)\s+(?:(?:o|a|os|as)\s+)?([^\s:,]+)\s*[:,-]?\s*(.*)$",
             text,
             re.IGNORECASE,
         )
@@ -247,7 +274,7 @@ class IntentParser:
 
         # Padrão: enviar mensagem <text> (sem destinatário explícito)
         match_no_target = re.match(
-            r"^(?:mandar|enviar|notificar)\s+(?:mensagem|msg|whatsapp|telegram)\s+(.*)$",
+            r"^(?:mandar|enviar|envia|envie|manda|mande|notificar)\s+(?:uma\s+)?(?:mensagem|msg|whatsapp|telegram)\s+(.*)$",
             text,
             re.IGNORECASE,
         )
@@ -255,6 +282,55 @@ class IntentParser:
             return {"target": "default", "text": match_no_target.group(1).strip()}
 
         return {"target": "default", "text": text}
+
+    def _extract_goal_payload(self, text: str) -> Dict[str, Optional[str]]:
+        """Extrai o alvo e o evento de uma missao de confirmacao."""
+        match = re.match(
+            r"^(?:pergunte|pergunta|confirme|confirmar|verifique)\s+"
+            r"(?:(?:ao|a|com|para)\s+([^\s:,]+)\s+)?"
+            r"(?:sobre|do|da|se)\s+(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            match = re.match(
+                r"^entre\s+em\s+contato\s+com\s+([^\s:,]+)\s+"
+                r"(?:para\s+)?(?:confirmar|verificar|perguntar)\s+(.+)$",
+                text,
+                re.IGNORECASE,
+            )
+        if not match:
+            return {"target": None, "event_description": text, "event_day": None}
+
+        target = match.group(1)
+        event_description = match.group(2).strip()
+        day_match = re.search(
+            r"\b(neste|nesse|no|na)?\s*(sábado|sabado|domingo|segunda-feira|segunda)\b",
+            event_description,
+            re.IGNORECASE,
+        )
+        return {
+            "target": target.strip() if target else None,
+            "event_description": event_description,
+            "event_day": day_match.group(0).strip() if day_match else None,
+        }
+
+    def _extract_contact_payload(self, text: str) -> Dict[str, Optional[str]]:
+        """Extrai nome, numero e campos opcionais de um cadastro simples."""
+        match = re.search(
+            r"contato\s+(?P<name>[^,;]+?)\s*[,;]\s*"
+            r"(?:numero|número|telefone|celular)\s*[:=]?\s*(?P<number>\+?[\d\s().-]+)"
+            r"(?:\s*[,;]\s*(?:chamada|apelido|contact_call)\s*[:=]?\s*(?P<call>[^,;]+))?",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return {"contact_name": None, "contact_number": None, "contact_call": None}
+        return {
+            "contact_name": match.group("name").strip(),
+            "contact_number": match.group("number").strip(),
+            "contact_call": match.group("call").strip() if match.group("call") else None,
+        }
 
     def _extract_email_payload(self, text: str) -> Dict[str, Any]:
         """Extrai operação e parâmetros de e-mail em um payload estruturado."""
@@ -409,21 +485,34 @@ class IntentParser:
                 "payload": self._extract_email_payload(cleaned_input),
             }
 
-        # 5. Mensagens
+        # 5. Cadastro explícito de contato
+        if self.CONTACT_KEYWORD.search(cleaned_input):
+            return {"intent": "contact", "payload": self._extract_contact_payload(cleaned_input)}
+
+        # 6. Objetivos conversacionais explícitos
+        if self.GOAL_KEYWORD.search(cleaned_input):
+            goal_payload = self._extract_goal_payload(cleaned_input)
+            if goal_payload.get("target") or re.search(r"\b(churrasco|evento)\b", cleaned_input, re.IGNORECASE):
+                return {
+                    "intent": "goal",
+                    "payload": goal_payload,
+                }
+
+        # 7. Mensagens
         if self.MESSAGE_KEYWORD.search(cleaned_input):
             return {
                 "intent": "message",
                 "payload": self._extract_message_payload(cleaned_input),
             }
 
-        # 6. Outros Comandos de Sistema / Palavra-chave
+        # 8. Outros Comandos de Sistema / Palavra-chave
         if self.COMMAND_KEYWORD.search(cleaned_input):
             return {
                 "intent": "command",
                 "payload": self._extract_command_payload(cleaned_input),
             }
 
-        # 7. Intenção Geral / Conversação
+        # 9. Intenção Geral / Conversação
         return {
             "intent": "general",
             "payload": {"text": cleaned_input},
@@ -448,7 +537,7 @@ class IntentParser:
             return self.parse(cleaned_input)
 
         system_instructions = (
-            "Você é o modelo roteador do assistente Rock no Kali Linux.\n"
+            "Você é o modelo roteador do assistente Rock.\n"
             "Sua única tarefa é analisar a entrada do usuário e extrair a intenção e os parâmetros estruturados.\n"
             "Você DEVE responder exclusivamente em formato JSON com duas chaves: 'intent' e 'payload'.\n\n"
             "Estruturas permitidas:\n"
@@ -462,6 +551,7 @@ class IntentParser:
             "Exemplo 2: 'lembrete reunião às 15:00' -> {\"intent\": \"reminder\", \"payload\": {\"text\": \"reunião\", \"when\": \"às 15:00\"}}\n"
             "Exemplo 3: 'exec nmap 127.0.0.1' -> {\"intent\": \"command\", \"payload\": {\"command\": \"nmap 127.0.0.1\"}}\n"
             "Exemplo 4: 'mandar whatsapp para joao tudo certo' -> {\"intent\": \"message\", \"payload\": {\"target\": \"joao\", \"text\": \"tudo certo\"}}\n"
+            "Toda intenção 'message' usa WhatsApp; nunca altere o transporte para Telegram. Preserve números explícitos no campo target e não invente números para nomes.\n"
             "Exemplo 5: 'listar emails não lidos' -> {\"intent\": \"email\", \"payload\": {\"operation\": \"list\", \"query\": \"is:unread\"}}\n"
             "Exemplo 6: 'envia email para ana@example.com e vê se a reunião está confirmada' -> {\"intent\": \"email\", \"payload\": {\"operation\": \"delegate\", \"to\": \"ana@example.com\", \"subject\": \"A reunião está confirmada\", \"body\": \"Olá, poderia confirmar se a reunião está confirmada?\"}}\n"
         )

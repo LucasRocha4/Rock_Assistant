@@ -89,6 +89,27 @@ def send_whatsapp_message(
         raise
 
 
+def send_whatsapp_presence(
+    recipient: str,
+    presence: str = "composing",
+    delay: int = 7000,
+) -> Dict[str, Any]:
+    """Atualiza a presenca de digitacao quando a Evolution API oferecer a rota."""
+    _check_evolution_config()
+    phone_number = _sanitize_phone_number(recipient)
+    if not phone_number:
+        raise ValueError("Número de telefone destinatário inválido")
+    url = f"{config.EVOLUTION_API_URL}/chat/sendPresence/{config.EVOLUTION_INSTANCE}"
+    response = requests.post(
+        url,
+        headers={"apikey": config.EVOLUTION_API_KEY, "Content-Type": "application/json"},
+        json={"number": phone_number, "presence": presence, "delay": delay},
+        timeout=config.EVOLUTION_REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def send_whatsapp_media(
     recipient: str,
     media: str,

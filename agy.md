@@ -131,7 +131,6 @@ Sem fazer chamadas reais por padrão:
 8. Entrada vazia ou `None`: deve retornar `{"intent": null, "payload": {}}` sem chamar a API.
 
 ## Testes do `ping_gemini`
-
 Com o SDK e a rede simulados:
 
 1. chave ausente: `success=False` e erro de chave ausente;

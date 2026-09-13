@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 
@@ -53,6 +54,9 @@ GEMINI_GENERATION_CONFIG = {
 GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "512"))
 
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
+CONVERSATION_SILENCE_SECONDS = float(os.getenv("CONVERSATION_SILENCE_SECONDS", "7"))
+CONVERSATION_MAX_INPUT_CHARS = int(os.getenv("CONVERSATION_MAX_INPUT_CHARS", "1000"))
+CONVERSATION_DISCARD_PREFIX_CHARS = int(os.getenv("CONVERSATION_DISCARD_PREFIX_CHARS", "200"))
 
 # ==========================================
 # 2.1 CONFIGURAÇÃO DA EVOLUTION API (WHATSAPP)
@@ -61,6 +65,7 @@ EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080").rstr
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
 EVOLUTION_REQUEST_TIMEOUT = int(os.getenv("EVOLUTION_REQUEST_TIMEOUT", "15"))
+OWNER_PHONE = re.sub(r"\D", "", os.getenv("OWNER_PHONE", ""))
 
 # ==========================================
 # 3. MAPEAMENTO DE ESTRUTURA DE PAYLOADS

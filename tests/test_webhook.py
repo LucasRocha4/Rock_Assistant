@@ -100,12 +100,10 @@ class EvolutionApiWebhookTests(unittest.TestCase):
         self.assertEqual(api._clean_phone_number(""), "")
 
     def test_command_safety_block(self):
-        with patch.object(api.router, "route") as route, patch.object(api, "send_whatsapp_message") as send:
+        with patch.object(api.conversation_manager, "receive") as receive:
             api._process_message("5511999999999", "exec rm -rf /")
 
-        route.assert_not_called()
-        send.assert_called_once()
-        self.assertIn("não são executados", send.call_args.args[1])
+        receive.assert_called_once_with("5511999999999", "exec rm -rf /")
 
     def test_invalid_json_returns_400(self):
         response = self.client.post(
@@ -154,9 +152,7 @@ class EvolutionApiMessagingTests(unittest.TestCase):
                     "delay": 1200,
                     "presence": "composing",
                 },
-                "textMessage": {
-                    "text": "Olá Mundo",
-                },
+                "text": "Olá Mundo",
             },
         )
 

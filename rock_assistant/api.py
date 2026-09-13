@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from rock_assistant.core.intent_parser import IntentParser
 from rock_assistant.core.memory import ConversationMemory
+from rock_assistant.core.conversation_manager import ConversationManager
 from rock_assistant.main import build_router
 from rock_assistant.tools.messaging import send_whatsapp_message
 
@@ -19,6 +20,7 @@ app = FastAPI(title="Rock Assistant WhatsApp Webhook (Evolution API)")
 parser = IntentParser()
 memory = ConversationMemory()
 router = build_router(memory=memory)
+conversation_manager = ConversationManager(parser=parser, router=router)
 
 
 def _clean_phone_number(remote_jid: str) -> str:
@@ -69,15 +71,20 @@ def _text_from_result(result: Any) -> str:
 
 
 def _process_message(sender: str, text: str) -> None:
-    parsed = parser.parse(text)
-    intent = parsed.get("intent")
-    if not intent:
-        return
-    if intent == "command":
-        answer = "Por segurança, comandos do sistema não são executados pelo WhatsApp."
-    else:
-        answer = _text_from_result(router.route(intent, parsed.get("payload", {})))
-    send_whatsapp_message(sender, answer)
+    """Adiciona a mensagem ao buffer; o processamento ocorre após o silencio configurado."""
+    conversation_manager.receive(sender, text)
+
+
+def _presence_is_typing(data: Dict[str, Any]) -> Optional[bool]:
+    """Interpreta os nomes de presenca usados pela Evolution/Baileys."""
+    value = data.get("presence") or data.get("status") or data.get("state")
+    if isinstance(value, str):
+        normalized = value.lower()
+        if normalized in {"composing", "recording", "typing"}:
+            return True
+        if normalized in {"paused", "available", "unavailable", "offline"}:
+            return False
+    return None
 
 
 @app.post("/webhook")
@@ -92,6 +99,16 @@ async def receive_webhook(request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="payload inválido")
 
     event = payload.get("event")
+    if event == "presence.update":
+        data = payload.get("data")
+        if isinstance(data, dict):
+            remote_jid = data.get("remoteJid") or data.get("id") or data.get("key", {}).get("remoteJid", "")
+            sender = _clean_phone_number(remote_jid)
+            typing = _presence_is_typing(data)
+            if sender and typing is not None:
+                conversation_manager.set_typing(sender, typing)
+        return {"status": "ok", "ignored": "presence_update"}
+
     if event != "messages.upsert":
         return {"status": "ok", "ignored": f"event_{event}"}
 

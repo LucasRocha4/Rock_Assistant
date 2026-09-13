@@ -39,3 +39,4 @@ tests/test_battery.py
 agy.md
 DOCUMENTACAO.md
 evolution_api/postgres_data/
+rock.db
