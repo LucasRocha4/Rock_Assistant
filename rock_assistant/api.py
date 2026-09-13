@@ -1,34 +1,61 @@
-"""Servidor HTTP para integração local com a WhatsApp Cloud API."""
+"""Servidor HTTP para integração local com a Evolution API (WhatsApp)."""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
-from typing import Any, Dict, Iterable, Optional
+import logging
+import re
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 
-from rock_assistant import config
 from rock_assistant.core.intent_parser import IntentParser
 from rock_assistant.core.memory import ConversationMemory
 from rock_assistant.main import build_router
 from rock_assistant.tools.messaging import send_whatsapp_message
 
-app = FastAPI(title="Rock Assistant WhatsApp Webhook")
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Rock Assistant WhatsApp Webhook (Evolution API)")
 parser = IntentParser()
 memory = ConversationMemory()
 router = build_router(memory=memory)
 
 
-def _signature_is_valid(body: bytes, signature: Optional[str]) -> bool:
-    """Valida a assinatura da Meta quando o app secret está configurado."""
-    if not config.META_APP_SECRET:
-        return True
-    if not signature or not signature.startswith("sha256="):
-        return False
-    expected = hmac.new(config.META_APP_SECRET.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(signature.removeprefix("sha256="), expected)
+def _clean_phone_number(remote_jid: str) -> str:
+    """Extrai apenas os números do remoteJid (ex: 5511999999999@s.whatsapp.net -> 5511999999999)."""
+    if not remote_jid:
+        return ""
+    jid_user = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+    return re.sub(r"\D", "", jid_user)
+
+
+def _extract_text(data: Dict[str, Any]) -> Optional[str]:
+    """Extrai o texto da mensagem a partir da estrutura da Evolution API."""
+    message = data.get("message")
+    if not isinstance(message, dict):
+        return None
+
+    # Mensagem de texto simples
+    conversation = message.get("conversation")
+    if isinstance(conversation, str) and conversation.strip():
+        return conversation.strip()
+
+    # Mensagem de texto estendida (respostas, links preview, etc.)
+    extended = message.get("extendedTextMessage")
+    if isinstance(extended, dict):
+        text = extended.get("text")
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+
+    # Fallback para legendas de mídia (imagem/documento/vídeo) caso enviadas com texto
+    for media_type in ("imageMessage", "videoMessage", "documentMessage"):
+        media_obj = message.get(media_type)
+        if isinstance(media_obj, dict):
+            caption = media_obj.get("caption")
+            if isinstance(caption, str) and caption.strip():
+                return caption.strip()
+
+    return None
 
 
 def _text_from_result(result: Any) -> str:
@@ -39,17 +66,6 @@ def _text_from_result(result: Any) -> str:
             if result.get(key):
                 return str(result[key])
     return str(result)
-
-
-def _text_messages(payload: Dict[str, Any]) -> Iterable[tuple[str, str]]:
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            for message in value.get("messages", []):
-                text = message.get("text", {}).get("body")
-                sender = message.get("from")
-                if isinstance(sender, str) and isinstance(text, str) and text.strip():
-                    yield sender, text.strip()
 
 
 def _process_message(sender: str, text: str) -> None:
@@ -64,30 +80,37 @@ def _process_message(sender: str, text: str) -> None:
     send_whatsapp_message(sender, answer)
 
 
-@app.get("/webhook")
-async def verify_webhook(request: Request) -> Response:
-    params = request.query_params
-    if params.get("hub.mode") == "subscribe" and hmac.compare_digest(
-        params.get("hub.verify_token", ""), config.META_VERIFY_TOKEN
-    ):
-        return Response(content=params.get("hub.challenge", ""), media_type="text/plain")
-    raise HTTPException(status_code=403, detail="token de verificação inválido")
-
-
 @app.post("/webhook")
 async def receive_webhook(request: Request) -> Dict[str, Any]:
-    body = await request.body()
-    if not _signature_is_valid(body, request.headers.get("x-hub-signature-256")):
-        raise HTTPException(status_code=403, detail="assinatura inválida")
+    """Recebe e processa eventos enviados pela Evolution API via Webhook."""
     try:
-        payload = json.loads(body)
-    except json.JSONDecodeError as exc:
+        payload = await request.json()
+    except Exception as exc:
         raise HTTPException(status_code=400, detail="JSON inválido") from exc
+
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="payload inválido")
 
-    processed = 0
-    for sender, text in _text_messages(payload):
-        _process_message(sender, text)
-        processed += 1
-    return {"status": "accepted", "processed": processed}
+    event = payload.get("event")
+    if event != "messages.upsert":
+        return {"status": "ok", "ignored": f"event_{event}"}
+
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {"status": "ok", "ignored": "missing_data"}
+
+    key = data.get("key", {})
+    if key.get("fromMe") is True:
+        return {"status": "ok", "ignored": "fromMe"}
+
+    remote_jid = key.get("remoteJid", "")
+    sender = _clean_phone_number(remote_jid)
+    if not sender:
+        return {"status": "ok", "ignored": "invalid_sender"}
+
+    text = _extract_text(data)
+    if not text:
+        return {"status": "ok", "ignored": "no_text"}
+
+    _process_message(sender, text)
+    return {"status": "ok", "processed": 1}

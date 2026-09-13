@@ -1,34 +1,25 @@
-<<<<<<< HEAD
 # Rock Assistant
 
-## Webhook local do WhatsApp
+## Webhook e Integração com Evolution API (WhatsApp)
 
-O servidor local usa FastAPI e expõe `GET /webhook` e `POST /webhook` para a
-WhatsApp Cloud API. Mensagens de texto são processadas pelo assistente e a
-resposta é enviada pela Graph API. Comandos do sistema são bloqueados nesse
-canal.
+O servidor local utiliza FastAPI e expõe o endpoint `POST /webhook` para receber eventos da **Evolution API** (`messages.upsert`). Mensagens de texto e áudio/respostas são processadas pelo assistente e as respostas são enviadas pela rota REST da Evolution API com simulação de digitação (`presence: composing`). Comandos locais do sistema operacional permanecem bloqueados por segurança através deste canal.
 
-Crie um `.env` com:
+### Configuração no `.env`
 
 ```env
-META_VERIFY_TOKEN=um-token-criado-por-voce
-META_APP_SECRET=segredo-do-app-meta
-META_ACCESS_TOKEN=token-de-acesso
-META_PHONE_NUMBER_ID=id-do-numero
+EVOLUTION_API_URL=http://localhost:8080
+EVOLUTION_API_KEY=sua_chave_global_evolution
+EVOLUTION_INSTANCE=SuporteBot
 ```
 
-Inicie o servidor:
+### Inicialização do Servidor
 
 ```bash
 uvicorn rock_assistant.api:app --host 0.0.0.0 --port 8000 --reload
-ngrok http 8000
 ```
 
-Na configuração do app Meta, use `https://SEU-DOMINIO-NGROK/webhook` como
-callback e o mesmo valor de `META_VERIFY_TOKEN` como token de verificação.
-O WhatsApp não consegue acessar diretamente `localhost`; o túnel HTTPS é
-necessário durante o desenvolvimento.
-=======
+Configure a Evolution API para apontar o Webhook para `http://<seu-host-ou-ip>:8000/webhook` (ou via túnel ngrok/Cloudflare durante o desenvolvimento) habilitando o evento `MESSAGES_UPSERT`.
+
 # Rock_Assistant
 
 ## Gmail
@@ -66,4 +57,3 @@ não responde nem negocia sozinho. O arquivo de estado é
 O monitoramento contínuo geral permanece desativado por padrão. A delegação
 ativa seu acompanhamento próprio enquanto o assistente estiver em execução;
 uma consulta pode ocorrer no início de cada novo ciclo de interação.
->>>>>>> 8a29f95 (Melhora do sistema de busca v1.1.)

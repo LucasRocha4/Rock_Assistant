@@ -55,21 +55,12 @@ GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "512"))
 GEMINI_TIMEOUT = int(os.getenv("GEMINI_TIMEOUT", "30"))
 
 # ==========================================
-# 2.1 CONFIGURAÇÃO DA WHATSAPP CLOUD API
+# 2.1 CONFIGURAÇÃO DA EVOLUTION API (WHATSAPP)
 # ==========================================
-META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
-META_APP_SECRET = os.getenv("META_APP_SECRET", "")
-META_ACCESS_TOKEN = os.getenv(
-    "PERMA_META_ACCESS_TOKEN",
-    os.getenv("META_ACCESS_TOKEN", ""),
-)
-META_PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID", "")
-META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v23.0")
-META_GRAPH_API_URL = os.getenv(
-    "META_GRAPH_API_URL",
-    f"https://graph.facebook.com/{META_GRAPH_API_VERSION}",
-).rstrip("/")
-META_REQUEST_TIMEOUT = int(os.getenv("META_REQUEST_TIMEOUT", "15"))
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "http://localhost:8080").rstrip("/")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
+EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "")
+EVOLUTION_REQUEST_TIMEOUT = int(os.getenv("EVOLUTION_REQUEST_TIMEOUT", "15"))
 
 # ==========================================
 # 3. MAPEAMENTO DE ESTRUTURA DE PAYLOADS
