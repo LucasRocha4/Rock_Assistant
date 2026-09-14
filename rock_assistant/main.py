@@ -201,6 +201,7 @@ def build_router(
             event_description=event_description,
             event_day=event_day,
         )
+        goal_store.append_exchange(goal["id"], "rock", question)
         return {
             "status": "goal_started",
             "goal_id": goal["id"],

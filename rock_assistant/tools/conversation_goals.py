@@ -111,6 +111,15 @@ class ConversationGoalStore:
             ).fetchone()
         return self._row_to_dict(row) if row else None
 
+    def get_by_id(self, goal_id: int) -> Optional[Dict[str, Any]]:
+        """Retorna um objetivo pelo id, independente do status."""
+        with sqlite3.connect(str(self.db_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM conversation_goals WHERE id = ?", (goal_id,)
+            ).fetchone()
+        return self._row_to_dict(row) if row else None
+
     def append_exchange(self, goal_id: int, sender: str, text: str) -> Dict[str, Any]:
         """Guarda uma fala no contexto do objetivo sem inferir fatos localmente."""
         now = datetime.now(timezone.utc).isoformat()

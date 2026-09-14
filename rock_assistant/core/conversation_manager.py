@@ -156,6 +156,7 @@ class ConversationManager:
             self._notify_owner_goal_completed(goal, collected_facts)
 
         if reply_text:
+            self.goal_store.append_exchange(goal["id"], "rock", reply_text)
             try:
                 send_whatsapp_message(sender, reply_text)
             except Exception:

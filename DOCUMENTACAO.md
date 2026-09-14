@@ -1,51 +1,94 @@
 # Documentacao do Rock Assistant
 
-Este documento descreve o funcionamento atual do projeto e a responsabilidade de cada arquivo dentro de `rock_assistant`.
+Este documento descreve a arquitetura atual do Rock Assistant, a responsabilidade de cada arquivo relevante e os fluxos de uso por capacidade. O projeto pode funcionar como aplicativo local de terminal, aplicativo local com voz e servidor HTTP para integracao com a Evolution API e WhatsApp.
 
 ## 1. Visao geral
 
-O Rock Assistant e um assistente de terminal para Linux/Kali com cinco tipos de acao:
+O Rock Assistant combina um interpretador de intencoes, um roteador de ferramentas, memoria local e um agente especialista baseado no Google Gemini.
 
-- conversa geral com a API do Google Gemini;
-- pesquisa na web;
-- criacao de lembretes;
-- execucao de comandos locais;
-- envio simulado de mensagens.
+As capacidades principais sao:
 
-Ele pode ser usado em modo texto ou em modo voz. No modo voz, o Speech-to-Text (STT) transforma a fala em texto e o Text-to-Speech (TTS) transforma a resposta em audio.
+- conversa geral e tarefas tecnicas com Gemini;
+- WhatsApp por webhook da Evolution API;
+- envio, leitura e resposta de e-mails pelo Gmail;
+- pesquisa web comum e busca em massa;
+- lembretes locais e sincronizacao opcional com Google Calendar;
+- contatos e objetivos conversacionais para confirmacao de eventos;
+- comandos e diagnosticos do sistema Linux;
+- entrada e saida por voz;
+- memoria curta persistida em JSON e estado operacional em SQLite.
+
+O envio de mensagens WhatsApp pelo modulo de integracao usa a Evolution API quando configurada. O modo generico de mensageria tambem possui caminhos de simulacao e deve ser verificado antes de ser tratado como uma integracao de producao.
+
+## 2. Modos de execucao
+
+### Terminal em texto
+
+```bash
+python -m rock_assistant.main
+```
+
+O programa le texto com `input()`, identifica a intencao, executa a ferramenta correspondente e mostra o resultado no terminal.
+
+### Terminal em voz
+
+```bash
+python -m rock_assistant.main --voz
+```
+
+O modo de voz captura audio com STT, processa a mesma cadeia de intencao e roteamento e fala a resposta usando TTS. Se o microfone ou as dependencias de audio nao estiverem disponiveis, o programa pode voltar a aceitar texto pelo terminal.
+
+### Webhook WhatsApp
+
+```bash
+uvicorn rock_assistant.api:app --host 0.0.0.0 --port 8000 --reload
+```
+
+O servidor FastAPI recebe eventos `messages.upsert` da Evolution API em `POST /webhook`. Mensagens do mesmo remetente sao agrupadas durante o periodo de silencio configurado antes de serem interpretadas.
+
+### Interface grafica
+
+O modulo `rock_gui.py` fornece a interface grafica local do projeto. A forma exata de inicializacao depende das bibliotecas e configuracoes presentes no ambiente; o nucleo continua sendo compartilhado com os modos de terminal.
+
+## 3. Arquitetura e fluxo comum
 
 ```mermaid
 flowchart TD
-    A[Usuario: texto ou voz] --> B[main.py]
-    B --> C[IntentParser]
-    C -->|intent + payload| D[Router]
+    A[Entrada: terminal ou WhatsApp] --> B[IntentParser]
+    B --> C[Intent e payload]
+    C --> D[Router]
     D --> E[Web Search]
-    D --> F[Reminders]
-    D --> G[System Command]
-    D --> H[Messaging]
-    D --> I[SpecialistAgent]
-    I --> J[Google Gemini API]
-    B --> K[ConversationMemory]
-    B --> L[TTS no modo voz]
-    K --> M[data/memory.json]
-    F --> N[data/rock.db]
-    F -. opcional .-> O[Google Calendar]
+    D --> F[Email/Gmail]
+    D --> G[Reminders]
+    D --> H[Contacts e Goals]
+    D --> I[System Commands]
+    D --> J[Messaging]
+    D --> K[SpecialistAgent]
+    K --> L[Google Gemini]
+    A --> M[ConversationMemory]
+    K --> M
+    M --> N[data/memory.json]
+    F --> O[Gmail OAuth]
+    G --> P[data/rock.db]
+    J --> Q[Evolution API]
 ```
 
-## 2. Fluxo de uma mensagem
+Fluxo de uma mensagem no terminal:
 
-1. `main.py` cria a memoria, o parser, o especialista e o roteador.
-2. O programa le uma entrada no terminal ou recebe uma frase do microfone.
-3. A entrada e salva na memoria de curto prazo.
-4. `IntentParser` identifica uma intencao e extrai um `payload` estruturado.
-5. `Router` procura o manipulador registrado para aquela intencao.
-6. A ferramenta executa a acao ou `SpecialistAgent` conversa com a API do Google Gemini.
-7. O resultado e exibido e salvo como resposta do assistente.
-8. No modo voz, a resposta completa e exibida/salva na memoria e uma versao tratada e enviada ao TTS.
+1. `main.py` cria memoria, parser, especialista e roteador.
+2. O usuario informa texto ou fala.
+3. A mensagem do usuario e salva na memoria curta.
+4. `IntentParser` identifica uma intencao e cria um `payload` estruturado.
+5. `Router` chama o manipulador registrado para a intencao.
+6. A ferramenta executa a acao ou `SpecialistAgent` consulta o Gemini.
+7. A resposta e salva na memoria e exibida.
+8. No modo de voz, `speech_formatter.py` prepara uma versao adequada para o TTS.
 
-As intencoes aceitas sao `search`, `reminder`, `command`, `message` e `general`.
+No webhook, `ConversationManager` acrescenta `owner_phone` ao payload e envia a resposta ao remetente pela Evolution API. Comandos locais do sistema permanecem bloqueados nesse canal.
 
-Exemplos de payloads:
+As intencoes usadas pelo roteador incluem `search`, `reminder`, `command`, `message`, `contact`, `goal`, `email` e `general`. O parser tambem pode retornar uma intencao vazia quando nao consegue classificar a entrada.
+
+Exemplos:
 
 ```text
 busca documentacao Python
@@ -58,249 +101,297 @@ exec uname -a
 => {"intent": "command", "payload": {"command": "uname -a"}}
 ```
 
-## 3. Arquivos e pastas
+## 4. WhatsApp e Evolution API
 
-### `rock_assistant/config.py`
+### Fluxo
 
-Centraliza configuracoes e caminhos do sistema. Ao ser importado, define a pasta `data` e a pasta `logs`, criando-as caso necessario.
-
-Principais configuracoes:
-
-- `GEMINI_API_KEY`: chave da API do Google Gemini;
-- `GEMINI_MODEL_ROUTER`: modelo que pode classificar intencoes estruturadas via LLM, por padrao `gemini-2.0-flash-lite`;
-- `GEMINI_MODEL_SPECIALIST`: modelo usado para conversa e tarefas tecnicas analiticas, por padrao `gemini-2.0-flash`;
-- `LLM_ROUTER_ENABLED`: desativado por padrao; quando falso, o parser usa RegEx;
-- `GEMINI_GENERATION_CONFIG`: parametros de temperatura e top_p para geracao;
-- `GEMINI_TIMEOUT`: tempo limite de resposta para a API em segundos;
-- `MEMORY_FILE`, `DB_PATH` e `MAX_MEMORY_MESSAGES`: persistencia e limite da memoria;
-- `VOICE_ENABLED`, `STT_MODEL`, `TTS_RATE`, `TTS_VOLUME`, `VOICE_LANGUAGE`, `TTS_BACKEND`, `PIPER_COMMAND`, `PIPER_MODEL_PATH`, `TTS_PLAYER` e `TTS_TEMP_DIR`: configuracoes de voz;
-- `get_credentials_path()` e `get_token_path()`: localizam credenciais do Google Calendar.
-
-A maioria dos valores pode ser alterada por variaveis de ambiente.
-
-### `rock_assistant/main.py`
-
-E o ponto de entrada e o coordenador da aplicacao.
-
-- `build_router()` registra cada intencao e a funcao que deve executa-la.
-- `run_text_loop()` implementa o terminal interativo sem audio.
-- `run_voice_loop()` captura fala, processa a intencao e reproduz a resposta.
-- `main()` interpreta `-v`/`--voz`, cria os objetos principais e inicia o loop escolhido.
-
-Ao iniciar, o Rock executa um briefing curto. Mensagens internas pendentes sem horario,
-ou cujo horario ja venceu, sao contadas e ficam disponiveis para entrega. Uma mensagem
-urgente e anunciada antes da saudacao. O usuario pode pedir para saber a origem ou ouvir
-as mensagens; somente ao ouvir o conteudo elas passam para o estado `delivered`.
-
-As saudacoes sao escolhidas aleatoriamente de uma lista fixa em
-`rock_assistant/core/startup.py`. O modo texto e o modo voz usam o mesmo briefing.
-
-Comandos especiais dos dois loops:
-
-- `sair`, `exit` ou `quit`: encerra o programa;
-- `limpar memoria`, `/clear` ou `clear memory`: apaga o historico persistido.
-
-Execucao direta esperada:
-
-```bash
-python -m rock_assistant.main
-python -m rock_assistant.main --voz
+```text
+Evolution API -> api.py -> ConversationManager -> IntentParser -> Router
+                                                     |
+                              resposta <- messaging.py <- ferramenta ou Gemini
 ```
 
-### `rock_assistant/core/intent_parser.py`
+1. A Evolution API envia um evento para `POST /webhook`.
+2. `api.py` ignora mensagens enviadas pelo proprio bot, eventos sem remetente e mensagens sem texto.
+3. O telefone e normalizado a partir do `remoteJid`.
+4. Texto simples, texto estendido e legendas de imagem, video ou documento sao aceitos.
+5. `ConversationManager` agrupa mensagens do remetente e aguarda silencio.
+6. O texto agrupado e interpretado e roteado.
+7. A resposta e enviada ao WhatsApp.
 
-Converte texto livre em uma intencao e em parametros. O caminho padrao e deterministico:
+Eventos `presence.update` controlam o estado de digitacao. Enquanto o contato esta digitando, o timer de processamento e pausado.
 
-1. comandos diretos de CLI e prefixos como `exec`;
-2. buscas iniciadas por termos como `busca` ou `pesquisa`;
-3. lembretes;
-4. mensagens;
-5. outros comandos de sistema;
-6. conversa geral.
+### Arquivos envolvidos
 
-`parse()` faz essa classificacao com expressoes regulares e extrai campos como `query`, `when`, `target` e `command`.
+- `rock_assistant/api.py`: cria a aplicacao FastAPI, extrai texto e remetente e trata `/webhook`.
+- `rock_assistant/core/conversation_manager.py`: mantem um buffer por remetente, usa `threading.Timer`, limita o tamanho da entrada e coordena objetivos ativos.
+- `rock_assistant/tools/messaging.py`: envia mensagens e presenca pela Evolution API quando configurada.
+- `rock_assistant/tools/contacts.py`: normaliza telefones e resolve nomes cadastrados.
+- `rock_assistant/tools/conversation_goals.py`: persiste confirmacoes de eventos e seus fatos coletados.
 
-`parse_with_llm()` usa o modelo `GEMINI_MODEL_ROUTER` da Google somente quando `LLM_ROUTER_ENABLED` esta ativo. Ele exige JSON, valida a intencao retornada e volta para `parse()` deterministico caso a API esteja indisponivel ou retorne erro.
+### Configuracao basica
 
-`ping_gemini()` realiza um smoke test de ping-pong com a API do Gemini para validar conectividade e autenticacao.
+```env
+EVOLUTION_API_URL=http://localhost:8080
+EVOLUTION_API_KEY=sua_chave_global_evolution
+EVOLUTION_INSTANCE=SuporteBot
+CONVERSATION_SILENCE_SECONDS=7
+```
 
-### `rock_assistant/core/memory.py`
+Configure o webhook da Evolution API para apontar para `http://seu-host:8000/webhook` e habilite o evento `MESSAGES_UPSERT`.
 
-Define `ConversationMemory`, a memoria de curto prazo do assistente.
+### Limites
 
-- guarda mensagens com `role` (`user` ou `assistant`) e `content`;
-- carrega o historico de `data/memory.json` ao iniciar;
-- salva automaticamente apos cada mensagem por padrao;
-- limita o historico a `MAX_MEMORY_MESSAGES`, dez mensagens por padrao;
-- funciona como uma janela deslizante, descartando as mensagens mais antigas;
-- `clear_memory()` esvazia memoria e arquivo JSON.
+- O webhook processa texto e legendas; ele nao implementa interpretacao completa de todos os tipos de midia.
+- A entrega depende de a Evolution API estar acessivel e autenticada.
+- A protecao contra comandos locais e uma regra do roteamento do canal, nao um mecanismo geral de seguranca.
+- Arquivos em `evolution_api/instances/` contem estado de sessoes e nao devem ser compartilhados.
 
-O especialista usa as mensagens mais recentes ao montar o contexto enviado ao modelo.
+## 5. E-mail e Gmail
 
-### `rock_assistant/core/router.py`
+### Operacoes disponiveis
 
-Implementa um roteador pequeno e generico. `register(intent, handler)` associa uma intencao a uma funcao. `route(intent, payload)` executa essa funcao.
+`rock_assistant/tools/email.py` define `GmailTool`, que suporta:
 
-Ele nao interpreta texto nem conhece as ferramentas. Essa separacao deixa o parser responsavel pela decisao e o `main.py` responsavel pelo registro das acoes.
+- envio de e-mail simples;
+- copia e copia oculta;
+- listagem por consulta Gmail;
+- leitura de mensagem e corpo em texto ou HTML;
+- identificacao de anexos;
+- marcacao como lida;
+- resposta preservando assunto, thread e cabecalhos de referencia.
 
-### `rock_assistant/core/specialist.py`
+Exemplos de pedidos:
 
-Define `SpecialistAgent`, o agente de conversa geral e tarefas tecnicas via Google Gemini SDK (`google-genai`).
+```text
+enviar email para pessoa@example.com, assunto: Oi, corpo: Tudo bem?
+listar emails nao lidos
+ler email ID
+responder email ID: texto
+marcar email ID como lido
+```
 
-O agente:
+### Autenticacao
 
-- envia chamadas estruturadas para o SDK do Gemini;
-- usa `GEMINI_MODEL_SPECIALIST` e o prompt de sistema tecnico;
-- inclui memoria recente formatada como turnos no histórico;
-- trata chave ausente, quota excedida, bloqueio de seguranca e timeout sem derrubar o programa;
-- pode ser usado diretamente pelo `Router` por implementar `__call__()`.
+Na primeira operacao, o OAuth2 abre o fluxo de autorizacao e salva o token localmente. O cliente OAuth deve ser salvo como `rock_assistant/data/credentials.json`; o token do Gmail fica em `rock_assistant/data/gmail_token.json`.
 
-O prompt de sistema identifica explicitamente o Rock como assistente pessoal do usuario,
-orientando respostas em portugues, objetivas, cuidadosas e baseadas no contexto real da
-conversa.
+```env
+GMAIL_TOKEN_FILE=rock_assistant/data/gmail_token.json
+GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.modify
+GMAIL_USER_ID=me
+GMAIL_MAX_MESSAGES=10
+GMAIL_MONITORING_ENABLED=False
+```
 
-### `rock_assistant/tools/web_search.py`
+### Delegacao de e-mail
 
-Implementa pesquisa externa.
+Pedidos como "acompanhe", "aguarde retorno" ou "tome as redeas" podem iniciar uma delegacao. `EmailDelegationManager`:
 
-`search_web_raw()` tenta, nesta ordem, DuckDuckGo via `DDGS`, uma query simplificada, a API Instant Answer do DuckDuckGo e a API de resumo da Wikipedia em portugues. Retorna uma lista estruturada com titulo, URL e resumo.
+1. envia o primeiro contato;
+2. salva destinatario, assunto, ids da mensagem e da thread;
+3. registra o estado em `rock_assistant/data/gmail_delegations.json`;
+4. consulta a thread em ciclos posteriores;
+5. informa quando chega uma resposta.
 
-`search_web_structured()` coordena a busca com uma tentativa inicial de 7 segundos,
-workers limitados e deadline global configuravel de 200 segundos. O modo `target`
-pode escalar de 5 para 10 e 20 workers; o modo `bulk` usa o adaptador Scrapy com
-ate 10 requisicoes concorrentes. O HTML pode ser enriquecido com `requests` e
-BeautifulSoup; tabelas sao convertidas com `pandas.read_html` quando disponivel.
-Os modos explicitos aceitos pelo parser sao `busca alvo especifico: ...` e
-`busca em massa: ...`.
+O assistente nao responde nem negocia sozinho depois que uma resposta chega. Ele pede uma decisao ao usuario. O monitoramento geral permanece desativado por padrao; a delegacao possui seu proprio acompanhamento enquanto o processo estiver executando.
 
-`search_web()` transforma essa lista em texto formatado para exibir no terminal. `WebSearchTool` oferece a mesma funcionalidade em formato orientado a objetos.
+## 6. Pesquisa e informacao
 
-A ferramenta depende de acesso a internet para obter resultados reais.
+### Pesquisa web
 
-### `rock_assistant/tools/reminders.py`
+`rock_assistant/tools/web_search.py` realiza buscas externas com estes fallbacks:
 
-Gerencia lembretes locais e a possivel sincronizacao com o Google Calendar.
+1. DuckDuckGo por `DDGS`;
+2. uma consulta simplificada;
+3. API Instant Answer do DuckDuckGo;
+4. API de resumo da Wikipedia em portugues.
 
-- `SQLiteReminderStorage` cria a tabela `reminders` e grava/lista registros em `data/rock.db`;
-- `GoogleCalendarAdapter` carrega OAuth2 de `credentials.json`/`token.json` e cria eventos no calendario principal;
-- `create_reminder()` grava primeiro no SQLite e depois tenta sincronizar;
-- se o Google nao estiver configurado, o lembrete continua salvo localmente com status `created_local`;
-- na interface, um lembrete criado com sucesso retorna apenas `Salvo`; detalhes técnicos permanecem no armazenamento e nos logs;
-- `list_reminders()` lista os lembretes mais recentes;
-- `list_pending_messages()` retorna mensagens internas vencidas ou sem horario;
-- `mark_delivered()` registra a entrega depois que o conteudo e apresentado ao usuario;
-- `ReminderTool` e um wrapper orientado a objetos.
+Os resultados sao normalizados com titulo, URL e resumo. `search_web()` gera texto para o terminal; `search_web_structured()` devolve dados estruturados e controla workers, timeout e prazo global.
 
-O adaptador converte `when` em data e hora efetivas no Google Calendar. Expressões como `amanhã meio dia` ou `amanhã ao meio-dia` criam um evento com `dateTime` às 12:00; quando apenas uma data é informada, como `amanhã`, o evento continua sendo de dia inteiro.
+Exemplos:
 
-### `rock_assistant/tools/system_cmd.py`
+```text
+busca documentacao FastAPI
+busca alvo especifico: site oficial Python asyncio
+```
 
-Executa comandos e diagnosticos do sistema Linux.
+A busca real depende de internet e dos pacotes instalados.
 
-- `is_command_safe()` bloqueia alguns padroes destrutivos, como `rm` contra `/`, `mkfs`, `dd` para discos e fork bomb;
-- `run_system_command()` executa com `shell=True`, captura saida e erro, aplica timeout e trata comandos ausentes;
-- `launch_terminal()` procura terminais graficos instalados;
-- `get_local_ip()` tenta socket UDP, `ip -4 addr` e hostname;
-- `run_nmap_scan()` usa `nmap` quando disponivel ou testa um conjunto fixo de portas como fallback;
-- `SystemCommandTool` agrupa essas funcoes em uma interface orientada a objetos.
+### Busca em massa
 
-Importante: a lista de bloqueios e limitada. Como existe `shell=True`, nao se deve tratar essa verificacao como uma sandbox completa. O programa deve ser executado com uma conta e permissoes adequadas.
+`rock_assistant/tools/bulk_search.py` usa Scrapy para percorrer URLs iniciais, respeitando `robots.txt`, limite de ate dez requisicoes concorrentes, timeout de download e prazo global.
 
-### `rock_assistant/tools/messaging.py`
+O modo e acionado por:
 
-Define `send_message()` e `MessagingTool`. Atualmente nao envia nada para WhatsApp, Telegram, Slack ou outro servico: apenas devolve um dicionario com status `queued` e o payload que seria enviado.
+```text
+busca em massa: https://exemplo.com
+```
 
-### `rock_assistant/tools/stt.py`
+Scrapy precisa estar instalado. O crawler nao deve ser interpretado como uma ferramenta sem limite: ele segue apenas links configurados pela estrategia atual e descarta extensoes como PDF, ZIP e EXE.
 
-Implementa Speech-to-Text.
+## 7. Lembretes e calendario
 
-- inicializa `SpeechRecognition` quando a dependencia esta disponivel;
-- seleciona microfone por `MICROPHONE_INDEX` ou por nome;
-- tenta capturar via PyAudio/SpeechRecognition;
-- tenta transcrever com Whisper local;
-- usa Google STT como fallback;
-- se PyAudio/PortAudio falhar, tenta `arecord` ou `pw-record`;
-- remove o WAV temporario depois da transcricao;
-- `get_stt()` fornece uma instancia global reutilizavel.
+### Interpretacao
 
-Sem microfone ou dependencias de audio, `listen()` retorna uma string vazia e o modo voz passa a aceitar texto pelo terminal.
+`rock_assistant/core/reminder_interpreter.py` transforma linguagem natural em um `ReminderDraft`, extraindo texto, data, horario, importancia e necessidade de confirmacao.
 
-### `rock_assistant/tools/tts.py`
+Exemplos:
 
-Implementa Text-to-Speech.
+```text
+lembre de estudar amanha as 14:00
+me lembre de ligar para Ana, e urgente
+```
 
-- usa Piper como backend principal, gerando WAV localmente e reproduzindo-o com `ffplay`, `mpv` ou `aplay`;
-- mantém `pyttsx3` como último fallback quando o comando, modelo ou player do Piper não estiver disponível;
-- permite configurar modelo, player, velocidade, volume e diretório temporário por variáveis de ambiente;
-- mantém `speak()`, `stop()`, `is_available()` e `get_tts()` para preservar o contrato do modo voz;
-- `stop()` interrompe o processo de reprodução atual quando o player permite;
-- `get_tts()` fornece uma instancia global.
+### Armazenamento e sincronizacao
 
-Para ativar o Piper, instale `piper-tts`, instale um player de áudio e baixe um modelo `.onnx` com seu arquivo `.onnx.json`. Por exemplo, configure:
+`rock_assistant/tools/reminders.py` grava primeiro no SQLite local em `rock_assistant/data/rock.db`. A sincronizacao opcional usa `GoogleCalendarAdapter` e OAuth2.
+
+- Se o Google Calendar nao estiver configurado, o lembrete continua local.
+- Uma data como "amanha" pode criar um evento de dia inteiro.
+- Expressoes como "amanha meio dia" sao convertidas para 12:00.
+- `list_pending_messages()` localiza mensagens sem horario ou vencidas.
+- `mark_delivered()` registra a entrega depois que o conteudo e apresentado.
+
+No inicio do programa, `core/startup.py` cria um briefing, anuncia pendencias urgentes e informa a existencia de outras mensagens. A mensagem so e marcada como entregue quando o conteudo e ouvido ou apresentado.
+
+## 8. Contatos e objetivos conversacionais
+
+### Contatos
+
+`rock_assistant/tools/contacts.py` mantem contatos em uma tabela SQLite chamada `contacts`.
+
+- `normalize_phone()` remove mascara e transforma JID em telefone.
+- `is_phone_number()` valida uma quantidade plausivel de digitos.
+- `add_contact()` grava nome, numero, descricao, e-mail e formas alternativas de chamada.
+- `list_contacts()` lista os registros.
+- `resolve_contact()` procura um unico contato por nome ou alias.
+
+Os contatos podem ser usados para resolver destinatarios de mensagens sem depender de inferencia livre do modelo.
+
+### Objetivos conversacionais
+
+`rock_assistant/tools/conversation_goals.py` persiste objetivos ativos separados da memoria curta. O fluxo atual de `event_confirmation` permite confirmar com um contato:
+
+- o que levar;
+- o local;
+- o horario.
+
+`ConversationManager` detecta um objetivo ativo para o telefone, envia o historico ao especialista em formato JSON e atualiza os fatos coletados. Ao concluir, marca o objetivo como `completed` e avisa o proprietario com um resumo.
+
+O modelo nao deve inventar fatos. Quando sua resposta nao contem uma pergunta valida, o gerenciador usa uma pergunta deterministica para os campos que faltam.
+
+## 9. Comandos do sistema
+
+`rock_assistant/tools/system_cmd.py` oferece comandos e diagnosticos locais:
+
+- execucao de comandos com captura de saida e erro;
+- timeout e tratamento de comando ausente;
+- abertura de terminal grafico;
+- descoberta do IP local;
+- varredura limitada com `nmap` e fallback de portas.
+
+Alguns padroes perigosos sao bloqueados, como `rm` contra a raiz, `mkfs`, `dd` para discos e fork bombs. Contudo, a execucao usa `shell=True`; a lista de bloqueios nao e uma sandbox. Use uma conta com permissoes restritas e nao exponha esse recurso a um canal nao confiavel.
+
+## 10. Voz: STT, TTS e formatacao
+
+### Speech-to-Text
+
+`rock_assistant/tools/stt.py` tenta, conforme o ambiente:
+
+1. capturar com SpeechRecognition/PyAudio;
+2. usar Whisper local;
+3. usar Google STT como fallback;
+4. capturar com `arecord` ou `pw-record` quando PortAudio falhar.
+
+WAVs temporarios sao removidos depois da transcricao. `get_stt()` fornece uma instancia reutilizavel.
+
+### Text-to-Speech
+
+`rock_assistant/tools/tts.py` usa Piper como backend preferencial, gera WAV e reproduz com `ffplay`, `mpv` ou `aplay`. Quando Piper, modelo ou player nao estao disponiveis, tenta `pyttsx3`.
+
+Para preparar Piper:
 
 ```bash
-./.venv/bin/python -m pip install piper-tts
+python -m pip install piper-tts
 mkdir -p models/piper
-./.venv/bin/python -m piper.download_voices pt_BR-faber-medium --download-dir models/piper
-PIPER_MODEL_PATH=/caminho/para/pt_BR-faber-medium.onnx
+python -m piper.download_voices pt_BR-faber-medium --download-dir models/piper
+```
+
+```env
+TTS_BACKEND=piper
+PIPER_COMMAND=piper
+PIPER_MODEL_PATH=models/piper/pt_BR-faber-medium.onnx
 TTS_PLAYER=ffplay
 ```
 
-O modelo não deve ser versionado no repositório. Se o Piper não estiver pronto, o Rock usa `pyttsx3` e registra o motivo do fallback.
+### Formatacao
 
-### `rock_assistant/core/speech_formatter.py`
+`rock_assistant/core/speech_formatter.py` converte operadores e estruturas em frases, remove URLs e Markdown desnecessarios e preserva o conteudo util. A resposta original continua na memoria e no terminal; apenas a copia enviada ao TTS e transformada.
 
-Cria a representação específica da resposta para fala. O terminal e a memória preservam a resposta original, enquanto o TTS recebe uma versão determinística que:
+## 11. Catalogo de arquivos
 
-- converte operadores como `=`, `==`, `!=`, `>=` e `<=` em expressões faladas;
-- remove URLs, separadores, emojis e formatação Markdown que não ajudam na conversa;
-- transforma dicionários e listas em frases com rótulos naturais;
-- mantém o conteúdo útil de resultados de busca e comandos sem fazer uma nova chamada ao Gemini.
+### Raiz
 
-### `rock_assistant/tools/__init__.py`
+- `README.md`: orientacao resumida, incluindo inicializacao do webhook, WhatsApp e Gmail.
+- `DOCUMENTACAO.md`: referencia detalhada de arquitetura, capacidades, arquivos e operacao.
+- `CORRECOES_IMPLEMENTADAS.md`: registro de correcoes implementadas no projeto.
+- `agy.md`: documento auxiliar do repositorio.
+- `requirements.txt`: dependencias Python.
+- `Dockerfile`: imagem de container; conferir o comando de entrada antes de usar em producao.
+- `docker-compose.yml`: servicos de infraestrutura, incluindo Evolution API e PostgreSQL.
 
-Marca `tools` como pacote e reexporta as funcoes principais: comandos de sistema, lembretes, busca web e mensagens. Nao contem logica adicional.
+### Pacote `rock_assistant`
 
-### `rock_assistant/core/__init__.py`
+- `main.py`: ponto de entrada, registro de handlers, loops de texto/voz, limpeza de memoria e briefing inicial.
+- `api.py`: aplicacao FastAPI e endpoint `POST /webhook` para Evolution API.
+- `config.py`: variaveis de ambiente, caminhos, modelos, limites, credenciais e configuracao de voz.
+- `rock_gui.py`: interface grafica local.
 
-Marca `core` como pacote Python. Atualmente nao expoe uma API propria.
+### Pacote `rock_assistant/core`
 
-### `rock_assistant/data/memory.json`
+- `__init__.py`: marca o diretorio como pacote Python.
+- `intent_parser.py`: classifica texto por regras ou Gemini e extrai payloads; possui `ping_gemini()` para verificacao de conectividade.
+- `router.py`: associa intencoes a handlers e executa o handler escolhido.
+- `specialist.py`: encapsula chamadas ao Google Gemini e inclui memoria recente no contexto.
+- `memory.py`: memoria curta com persistencia em JSON e limite de mensagens.
+- `conversation_manager.py`: buffer por remetente, espera por silencio, indicador de digitacao e objetivos ativos do WhatsApp.
+- `reminder_interpreter.py`: interpreta datas, horarios, importancia e dados de lembretes.
+- `speech_formatter.py`: cria a resposta textual adequada para sintese de voz.
+- `startup.py`: saudacao e briefing de mensagens pendentes no inicio.
 
-Arquivo JSON persistido pela memoria de conversa. Seu formato e uma lista de objetos:
+### Pacote `rock_assistant/tools`
 
-```json
-[
-  {"role": "user", "content": "Ola"},
-  {"role": "assistant", "content": "Como posso ajudar?"}
-]
-```
+- `__init__.py`: marca o diretorio como pacote e reexporta ferramentas principais.
+- `web_search.py`: pesquisa DuckDuckGo/Wikipedia e enriquecimento de resultados.
+- `bulk_search.py`: crawler Scrapy para busca em massa.
+- `email.py`: Gmail OAuth, envio, leitura, resposta e delegacao.
+- `reminders.py`: SQLite, mensagens pendentes e Google Calendar opcional.
+- `contacts.py`: cadastro, normalizacao e resolucao de contatos.
+- `conversation_goals.py`: persistencia de objetivos e fatos coletados.
+- `messaging.py`: mensagens e presenca via Evolution API, com caminhos de simulacao quando aplicavel.
+- `system_cmd.py`: comandos e diagnosticos do Linux.
+- `stt.py`: captura e reconhecimento de fala.
+- `tts.py`: sintese e reproducao de fala.
 
-### `rock_assistant/data/rock.db`
+### Dados, modelos e runtime
 
-Banco SQLite local dos lembretes. A tabela principal e `reminders`, com id, mensagem, horario informado, data de criacao, indicador de sincronizacao e id do evento Google.
+- `rock_assistant/data/memory.json`: historico curto persistido.
+- `rock_assistant/data/rock.db`: lembretes, contatos e objetivos conversacionais.
+- `rock_assistant/data/credentials.json`: cliente OAuth do Google; sensivel.
+- `rock_assistant/data/token.json`: token do Google Calendar; sensivel.
+- `rock_assistant/data/gmail_token.json`: token do Gmail; sensivel.
+- `rock_assistant/data/gmail_delegations.json`: estado de delegacoes de e-mail; pode conter metadados pessoais.
+- `rock_assistant/logs/`: diretorio reservado para logs locais.
+- `models/piper/`: pesos e metadados do modelo Piper; os arquivos podem ser grandes e nao devem ser expostos sem necessidade.
+- `evolution_api/instances/`: sessoes, chaves e mapeamentos do WhatsApp; nunca compartilhar ou versionar publicamente.
+- `evolution_api/postgres_data/`: volume de dados do PostgreSQL da infraestrutura.
 
-### `rock_assistant/logs/`
+## 12. Configuracao
 
-Diretorio reservado para logs. O codigo atual usa alguns loggers de STT/TTS, mas esta pasta aparece vazia e nao ha configuracao central de gravacao de logs nela.
+As configuracoes sao carregadas por `rock_assistant/config.py`. Os nomes mais importantes sao:
 
-## 4. Dependencias externas
-
-As dependencias estao em `requirements.txt`. As mais importantes sao:
-
-- `google-genai`: SDK oficial para comunicacao com a API Google Gemini;
-- `requests`: comunicacao HTTP com APIs web;
-- `duckduckgo-search`/`ddgs`: pesquisa DuckDuckGo;
-- `beautifulsoup4`, `pandas`, `lxml`: leitura de HTML e tabelas;
-- `Scrapy`: crawling controlado para buscas em massa;
-- bibliotecas `google-api-python-client`, `google-auth-*`: OAuth2 e Google Calendar;
-- `SpeechRecognition` e `openai-whisper`: reconhecimento de voz;
-- `pyttsx3` e `gTTS`: sintese de voz.
-
-## 5. Variaveis de ambiente uteis
-
-```bash
-GEMINI_API_KEY=AIzaSy...
+```env
+GEMINI_API_KEY=chave_do_gemini
 GEMINI_MODEL_ROUTER=gemini-2.0-flash-lite
 GEMINI_MODEL_SPECIALIST=gemini-2.0-flash
 LLM_ROUTER_ENABLED=False
@@ -315,24 +406,60 @@ MICROPHONE_NAME=
 TTS_RATE=175
 TTS_VOLUME=1.0
 TTS_BACKEND=piper
-PIPER_COMMAND=piper
 PIPER_MODEL_PATH=models/piper/pt_BR-faber-medium.onnx
 TTS_PLAYER=ffplay
+GMAIL_TOKEN_FILE=rock_assistant/data/gmail_token.json
+GMAIL_MAX_MESSAGES=10
+GMAIL_MONITORING_ENABLED=False
+CONVERSATION_SILENCE_SECONDS=7
 ```
 
-## 6. Testes relacionados
+Nunca coloque chaves, tokens ou credenciais diretamente neste documento ou em logs. Prefira variaveis de ambiente e arquivos locais ignorados pelo controle de versao.
 
-- `test_phase1.py`: busca web, comandos do sistema, lembretes, parser e roteador;
-- `test_phase2.py`: memoria, contexto, especialista Gemini, fallback de autenticacao e integracao da rota `general`;
-- `test_phase3.py`: TTS, STT e fluxo integrado de voz;
-- `test_fixes.py`: verificacoes manuais de tempo do STT, voz PT-BR e validacao de ping-pong com a API do Gemini.
+## 13. Dependencias externas
 
-Alguns testes dependem do ambiente: internet, microfone, players de audio, `nmap`, chave do Gemini e credenciais Google podem estar ausentes. Os testes foram escritos para simular ou aceitar varios desses fallbacks.
+As dependencias ficam em `requirements.txt`. Entre as principais estao:
 
-## 7. Pontos de atencao atuais
+- `fastapi` e `uvicorn`: servidor do webhook;
+- `google-genai`: Gemini;
+- `requests`, `ddgs` ou `duckduckgo-search`: pesquisa;
+- `beautifulsoup4`, `pandas` e `lxml`: leitura e enriquecimento de paginas;
+- `Scrapy`: busca em massa;
+- `google-api-python-client`, `google-auth-*` e `google-auth-oauthlib`: Gmail e Calendar;
+- `SpeechRecognition`, `openai-whisper` e PyAudio: STT;
+- `piper-tts`, `pyttsx3` e players de audio: TTS.
 
-1. O envio de mensagens ainda e uma simulacao.
-2. A protecao de comandos nao substitui isolamento ou permissoes restritas.
-3. A sincronizacao Google usa atualmente o horario de execucao, nao o valor textual de `when`.
-4. O `Dockerfile` inicia `uvicorn app.main:app`, mas este repositorio nao possui `app/main.py` nem uma aplicacao FastAPI visivel. A execucao documentada do assistente e pelo modulo `rock_assistant.main`; o comando Docker precisa ser ajustado antes de ser usado como container funcional.
-5. `VOICE_ENABLED` e definido em `config.py`, mas a escolha do modo e feita pelo argumento `--voz` em `main.py`.
+Alguns recursos tambem dependem de programas do sistema, como `ffplay`, `mpv`, `aplay`, `arecord`, `pw-record` e `nmap`.
+
+## 14. Testes e verificacao
+
+Execute a suite com:
+
+```bash
+python -m pytest tests/ -v
+```
+
+Arquivos de teste atuais:
+
+- `tests/test_battery.py`: parser, roteador e intencoes basicas;
+- `tests/test_contacts.py`: contatos, telefones e aliases;
+- `tests/test_conversation_manager.py`: buffer, timer e silencio;
+- `tests/test_email.py`: Gmail, envio e delegacao;
+- `tests/test_messaging_routing.py`: roteamento de mensagens e WhatsApp;
+- `tests/test_reminder_interpreter.py`: datas, horarios e importancia;
+- `tests/test_startup.py`: briefing e entrega de pendencias;
+- `tests/test_web_search.py`: pesquisa, busca em massa e enriquecimento;
+- `tests/test_webhook.py`: extracao e processamento do webhook.
+
+Alguns testes ou fluxos manuais podem depender de internet, credenciais Google, microfone, player de audio, `nmap`, Scrapy ou chave do Gemini. Uma falha de ambiente deve ser diferenciada de uma falha de logica do projeto.
+
+## 15. Pontos de atencao
+
+1. A execucao de comandos usa `shell=True` e nao substitui isolamento, container ou permissoes restritas.
+2. A integracao WhatsApp depende da Evolution API, da instancia configurada e do estado local da sessao.
+3. O Gmail e o Google Calendar exigem OAuth e arquivos de credencial locais.
+4. Pesquisa web, Gemini e alguns fallbacks dependem de acesso externo.
+5. STT e TTS dependem de hardware, modelos e programas de audio opcionais.
+6. Mensagens genericas podem retornar status simulado quando uma integracao real nao esta configurada.
+7. `Dockerfile` e `docker-compose.yml` precisam ser conferidos no ambiente atual; a execucao documentada do assistente usa `rock_assistant.main` e a do webhook usa `rock_assistant.api:app`.
+8. Os arquivos de dados, tokens, logs, sessoes WhatsApp e banco SQLite podem conter informacoes pessoais e nao devem ser publicados.
