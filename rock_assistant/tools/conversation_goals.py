@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from rock_assistant.config import DB_PATH
+from rock_assistant.setup.config import DB_PATH
 
 
 class ConversationGoalStore:

@@ -41,7 +41,7 @@ O modo de voz captura audio com STT, processa a mesma cadeia de intencao e rotea
 ### Webhook WhatsApp
 
 ```bash
-uvicorn rock_assistant.api:app --host 0.0.0.0 --port 8000 --reload
+uvicorn rock_assistant.setup.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 O servidor FastAPI recebe eventos `messages.upsert` da Evolution API em `POST /webhook`. Mensagens do mesmo remetente sao agrupadas durante o periodo de silencio configurado antes de serem interpretadas.

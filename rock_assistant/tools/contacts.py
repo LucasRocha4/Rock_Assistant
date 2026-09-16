@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from rock_assistant.config import DB_PATH
+from rock_assistant.setup.config import DB_PATH
 
 
 def normalize_phone(value: str) -> str:

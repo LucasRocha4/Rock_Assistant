@@ -16,9 +16,9 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
+    from setup import config
 except ImportError:
-    from rock_assistant import config
+    from rock_assistant.setup import config
 
 logger = logging.getLogger("rock.tts")
 

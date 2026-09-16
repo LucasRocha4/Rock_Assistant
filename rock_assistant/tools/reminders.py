@@ -16,11 +16,11 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
-    from config import DB_PATH, get_credentials_path, get_token_path
+    from setup import config
+    from setup.config import DB_PATH, get_credentials_path, get_token_path
 except ImportError:
-    from rock_assistant import config
-    from rock_assistant.config import DB_PATH, get_credentials_path, get_token_path
+    from rock_assistant.setup import config
+    from rock_assistant.setup.config import DB_PATH, get_credentials_path, get_token_path
 
 
 class GoogleCalendarAuthError(Exception):

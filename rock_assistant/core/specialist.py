@@ -1,4 +1,4 @@
-"""Agente Especialista (Google Gemini) para raciocínio denso, código e conversação técnica."""
+"""Agente Especialista (Google Gemini), usado hoje apenas para enriquecer resultados de pesquisa web."""
 
 import os
 import sys
@@ -11,18 +11,19 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
-    from config import GEMINI_GENERATION_CONFIG, GEMINI_MODEL_SPECIALIST
+    from setup import config
+    from setup.config import GEMINI_GENERATION_CONFIG, GEMINI_MODEL_SPECIALIST
     from core.memory import ConversationMemory
 except ImportError:
-    from rock_assistant import config
-    from rock_assistant.config import GEMINI_GENERATION_CONFIG, GEMINI_MODEL_SPECIALIST
+    from rock_assistant.setup import config
+    from rock_assistant.setup.config import GEMINI_GENERATION_CONFIG, GEMINI_MODEL_SPECIALIST
     from rock_assistant.core.memory import ConversationMemory
 
 
 SYSTEM_PROMPT_DEFAULT = (
     "Você é Rock, o assistente pessoal do usuário.\n"
-    "Seu trabalho é ajudar o usuário a pensar, lembrar, decidir e executar tarefas no computador.\n"
+    "Neste momento você é usado apenas para sintetizar e enriquecer resultados de pesquisa web; "
+    "o restante da conversa é conduzido por um modelo local (Llama).\n"
     "Conheça o contexto da conversa, mas nunca invente fatos sobre o usuário, suas preferências ou ações realizadas.\n"
     "Responda em português do Brasil por padrão, com clareza, naturalidade e objetividade.\n"
     "Em conversas simples, seja breve. Em assuntos técnicos, explique o necessário e entregue soluções práticas.\n"

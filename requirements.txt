@@ -8,6 +8,7 @@ lxml>=5.0.0
 Scrapy>=2.11.0
 python-dotenv>=1.0.0
 duckduckgo-search>=8.0.0
+ollama>=0.3.0
 google-genai>=2.0.0
 google-api-python-client>=2.100.0
 google-auth-httplib2>=0.2.0
@@ -16,3 +17,7 @@ pyttsx3>=2.90
 piper-tts>=1.2.0
 SpeechRecognition>=3.10.0
 openai-whisper>=20231117
+
+# Preparativos para telefonia (Asterisk) — dependências a instalar quando a feature for iniciada
+# ari  # cliente Python para Asterisk REST Interface
+# panoramisk  # cliente AMI assíncrono, alternativa ao ARI

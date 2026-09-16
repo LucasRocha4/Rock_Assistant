@@ -15,7 +15,7 @@ EVOLUTION_INSTANCE=SuporteBot
 ### Inicialização do Servidor
 
 ```bash
-uvicorn rock_assistant.api:app --host 0.0.0.0 --port 8000 --reload
+uvicorn rock_assistant.setup.api:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 Configure a Evolution API para apontar o Webhook para `http://<seu-host-ou-ip>:8000/webhook` (ou via túnel ngrok/Cloudflare durante o desenvolvimento) habilitando o evento `MESSAGES_UPSERT`.

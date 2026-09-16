@@ -12,11 +12,11 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
-    from config import STT_MODEL, VOICE_LANGUAGE
+    from setup import config
+    from setup.config import STT_MODEL, VOICE_LANGUAGE
 except ImportError:
-    from rock_assistant import config
-    from rock_assistant.config import STT_MODEL, VOICE_LANGUAGE
+    from rock_assistant.setup import config
+    from rock_assistant.setup.config import STT_MODEL, VOICE_LANGUAGE
 
 logger = logging.getLogger("rock.stt")
 

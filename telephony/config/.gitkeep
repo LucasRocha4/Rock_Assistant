@@ -1,0 +1,2 @@
+# Reservado para configurações do Asterisk (pjsip.conf, extensions.conf, ari.conf, etc.)
+# quando a integração de telefonia for iniciada. Sem arquivos funcionais ainda.

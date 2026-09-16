@@ -21,7 +21,7 @@ except ImportError:
     pd = None
 
 try:
-    from rock_assistant import config
+    from rock_assistant.setup import config
 except ImportError:
     config = None
 

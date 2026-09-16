@@ -35,7 +35,7 @@ from core.memory import ConversationMemory
 from main import build_router
 from tools.conversation_goals import ConversationGoalStore
 from tools.reminders import SQLiteReminderStorage
-import config
+from setup import config
 
 
 def _normalize_response(result: Any) -> str:

@@ -16,17 +16,17 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from core.intent_parser import IntentParser
+from core.local_llm import LocalLLMAgent
 from core.memory import ConversationMemory
 from core.reminder_interpreter import ReminderInterpreter
 from core.router import Router
 from core.speech_formatter import format_for_speech
 from core.specialist import SpecialistAgent
 from core.startup import StartupBriefing
-from rock_assistant import config
+from setup import config
 from tools.contacts import add_contact, initialize_contacts_db, is_phone_number, list_contacts, normalize_phone, resolve_contact
 from tools.conversation_goals import ConversationGoalStore
-from tools.messaging import send_whatsapp_message
-from tools.email import get_email_delegation_manager, get_gmail_tool, set_monitoring_enabled
+from tools.contacting import get_email_delegation_manager, get_gmail_tool, send_whatsapp_message, set_monitoring_enabled
 from tools.reminders import create_reminder, SQLiteReminderStorage
 from tools.stt import SpeechToText, get_stt
 from tools.system_cmd import run_system_command
@@ -36,12 +36,16 @@ from tools.web_search import search_web
 
 def build_router(
     specialist: Optional[SpecialistAgent] = None,
+    llm: Optional[LocalLLMAgent] = None,
     memory: Optional[ConversationMemory] = None,
     goal_store: Optional[ConversationGoalStore] = None,
 ) -> Router:
     """Configura as rotas principais da aplicação mapeando intenções e payloads."""
     router = Router()
+    # Gemini fica restrito ao enriquecimento de resultados de pesquisa web
     specialist_agent = specialist or SpecialistAgent(memory=memory)
+    # Llama local (Ollama) é o cérebro padrão: compõe mensagens e conduz o chat geral
+    llm_agent = llm or LocalLLMAgent(memory=memory)
     reminder_interpreter = ReminderInterpreter()
     goal_store = goal_store or ConversationGoalStore()
     initialize_contacts_db()
@@ -69,11 +73,7 @@ def build_router(
 
     router.register(
         "search",
-        lambda payload: search_web(
-            payload.get("query", payload.get("text", "")),
-            max_results=int(payload.get("max_results", 5)),
-            mode=payload.get("mode"),
-        ),
+        lambda payload: _handle_search(payload, specialist_agent),
     )
     router.register(
         "reminder",
@@ -100,12 +100,12 @@ def build_router(
                 "message": f"Nao encontrei um numero para '{target}'. Informe o numero ou cadastre o contato.",
             }
         composed_message = message
-        if specialist_agent.is_available() and re.search(
+        if llm_agent.is_available() and re.search(
             r"\b(perguntando|pergunta|dizendo|diga|avisando|avise|explique|convide)\b",
             message,
             re.IGNORECASE,
         ):
-            composed_message = specialist_agent.chat(
+            composed_message = llm_agent.chat(
                 message,
                 extra_system_prompt=(
                     "Redija somente a mensagem final que será enviada pelo WhatsApp ao destinatário. "
@@ -177,8 +177,8 @@ def build_router(
             "Você pode me dizer onde será, que horas começa e o que precisamos levar?"
         )
         question = fallback_question
-        if specialist_agent.is_available():
-            question = specialist_agent.chat(
+        if llm_agent.is_available():
+            question = llm_agent.chat(
                 event_description,
                 extra_system_prompt=(
                     "Você está iniciando uma conversa em nome do Rock para confirmar um evento. "
@@ -243,13 +243,37 @@ def build_router(
     router.register("email", handle_email)
     router.register(
         "general",
-        lambda payload: specialist_agent.chat(
+        lambda payload: llm_agent.chat(
             payload.get("text", ""),
             memory=memory,
         ),
     )
 
     return router
+
+
+def _handle_search(payload: dict, specialist_agent: SpecialistAgent):
+    """Executa a busca web e usa o Gemini (quando disponível) só para sintetizar os resultados."""
+    query = payload.get("query", payload.get("text", ""))
+    raw_result = search_web(
+        query,
+        max_results=int(payload.get("max_results", 5)),
+        mode=payload.get("mode"),
+    )
+    if not specialist_agent.is_available():
+        return raw_result
+    try:
+        synthesized = specialist_agent.chat(
+            raw_result,
+            extra_system_prompt=(
+                "Você recebeu resultados brutos de uma pesquisa na web. Resuma e apresente as informações "
+                "mais relevantes para a pergunta original de forma objetiva, em português brasileiro, sem "
+                "inventar dados que não estejam nos resultados."
+            ),
+        )
+        return synthesized or raw_result
+    except Exception:
+        return raw_result
 
 
 def poll_email_delegations() -> list[dict]:
@@ -271,9 +295,11 @@ def run_voice_loop(
     tts: TextToSpeech,
     stt: SpeechToText,
     specialist: Optional[SpecialistAgent] = None,
+    llm: Optional[LocalLLMAgent] = None,
     owner_phone: str = "",
 ) -> None:
     """Executa o loop interativo em Modo Voz (Ouvidos com STT e Voz com TTS)."""
+    llm_agent = llm or LocalLLMAgent(memory=memory)
     mic_available = stt.is_microphone_available()
     if not mic_available:
         print("⚠️ [Aviso] Microfone ou PyAudio não detectado no sistema.")
@@ -322,33 +348,37 @@ def run_voice_loop(
         intent = parsed.get("intent")
         payload = parsed.get("payload", {})
 
-        if intent is None:
-            intent = "general"
-            payload = {"text": user_input}
-
-        print(f"🎯 Intenção detectada: {intent}")
-        if intent != "general":
+        print(f"🎯 Intenção detectada: {intent or 'nenhuma (Llama local decide)'}")
+        if intent and intent != "general":
             print(f"📦 Payload extraído: {payload}")
 
         try:
-            if intent == "reminder":
-                payload = {**payload, "raw_text": user_input}
-            if intent == "goal" and owner_phone:
-                payload = {**payload, "owner_phone": owner_phone}
-            result = router.route(intent, payload)
-            if isinstance(result, str):
-                response_text = result
-            elif isinstance(result, dict):
-                response_text = "\n".join(f"  {k}: {v}" for k, v in result.items())
+            if intent is None:
+                # Base MCP: sem intenção determinística, o Llama local decide qual tool chamar
+                response_text = llm_agent.converse_with_tools(
+                    user_input,
+                    tool_executor=lambda name, args: router.route(name, args),
+                    memory=memory,
+                )
             else:
-                response_text = str(result)
+                if intent == "reminder":
+                    payload = {**payload, "raw_text": user_input}
+                if intent == "goal" and owner_phone:
+                    payload = {**payload, "owner_phone": owner_phone}
+                result = router.route(intent, payload)
+                if isinstance(result, str):
+                    response_text = result
+                elif isinstance(result, dict):
+                    response_text = "\n".join(f"  {k}: {v}" for k, v in result.items())
+                else:
+                    response_text = str(result)
 
             print("\n--- [Resultado] ---")
             print(response_text)
 
             # 3. Registra resposta na memória e sintetiza áudio falado via TTS
             memory.add_assistant_message(response_text)
-            tts.speak(format_for_speech(response_text, intent=intent))
+            tts.speak(format_for_speech(response_text, intent=intent or "general"))
 
         except Exception as exc:
             err_msg = f"Erro ao processar comando: {exc}"
@@ -361,9 +391,11 @@ def run_text_loop(
     router: Router,
     parser: IntentParser,
     memory: ConversationMemory,
+    llm: Optional[LocalLLMAgent] = None,
     owner_phone: str = "",
 ) -> None:
     """Executa o loop interativo padrão em Modo Texto."""
+    llm_agent = llm or LocalLLMAgent(memory=memory)
     while True:
         for notice in poll_email_delegations():
             print(f"\n📨 {notice['message']}")
@@ -394,28 +426,32 @@ def run_text_loop(
         intent = parsed.get("intent")
         payload = parsed.get("payload", {})
 
-        if intent is None:
-            intent = "general"
-            payload = {"text": user_input}
-
-        print(f"🎯 Intenção detectada: {intent}")
-        if intent != "general":
+        print(f"🎯 Intenção detectada: {intent or 'nenhuma (Llama local decide)'}")
+        if intent and intent != "general":
             print(f"📦 Payload extraído: {payload}")
 
         try:
-            if intent == "reminder":
-                payload = {**payload, "raw_text": user_input}
-            if intent == "goal" and owner_phone:
-                payload = {**payload, "owner_phone": owner_phone}
-            result = router.route(intent, payload)
-            print("\n--- [Resultado] ---")
-            if isinstance(result, str):
-                response_text = result
-            elif isinstance(result, dict):
-                response_text = "\n".join(f"  {k}: {v}" for k, v in result.items())
+            if intent is None:
+                # Base MCP: sem intenção determinística, o Llama local decide qual tool chamar
+                response_text = llm_agent.converse_with_tools(
+                    user_input,
+                    tool_executor=lambda name, args: router.route(name, args),
+                    memory=memory,
+                )
             else:
-                response_text = str(result)
+                if intent == "reminder":
+                    payload = {**payload, "raw_text": user_input}
+                if intent == "goal" and owner_phone:
+                    payload = {**payload, "owner_phone": owner_phone}
+                result = router.route(intent, payload)
+                if isinstance(result, str):
+                    response_text = result
+                elif isinstance(result, dict):
+                    response_text = "\n".join(f"  {k}: {v}" for k, v in result.items())
+                else:
+                    response_text = str(result)
 
+            print("\n--- [Resultado] ---")
             print(response_text)
 
             # 3. Registra a resposta do assistente na memória
@@ -452,8 +488,9 @@ def main() -> None:
 
     memory = ConversationMemory()
     specialist = SpecialistAgent(memory=memory)
+    llm_agent = LocalLLMAgent(memory=memory)
     intent_parser = IntentParser()
-    router = build_router(specialist=specialist, memory=memory)
+    router = build_router(specialist=specialist, llm=llm_agent, memory=memory)
     briefing = StartupBriefing(storage=SQLiteReminderStorage())
 
     if args.voz:
@@ -467,6 +504,7 @@ def main() -> None:
             tts=tts,
             stt=stt,
             specialist=specialist,
+            llm=llm_agent,
             owner_phone=owner_phone,
         )
     else:
@@ -475,6 +513,7 @@ def main() -> None:
             router=router,
             parser=intent_parser,
             memory=memory,
+            llm=llm_agent,
             owner_phone=owner_phone,
         )
 

@@ -11,11 +11,11 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    import config
-    from config import MAX_MEMORY_MESSAGES, MEMORY_FILE
+    from setup import config
+    from setup.config import MAX_MEMORY_MESSAGES, MEMORY_FILE
 except ImportError:
-    from rock_assistant import config
-    from rock_assistant.config import MAX_MEMORY_MESSAGES, MEMORY_FILE
+    from rock_assistant.setup import config
+    from rock_assistant.setup.config import MAX_MEMORY_MESSAGES, MEMORY_FILE
 
 
 class ConversationMemory:

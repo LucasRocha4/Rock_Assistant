@@ -13,9 +13,9 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
-    from rock_assistant import config
+    from rock_assistant.setup import config
 except ImportError:
-    import config
+    from setup import config
 
 
 def ping_gemini(api_key: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
