@@ -556,17 +556,26 @@ class ContactingTool:
     def mark_email_read(self, message_id: str) -> Dict[str, Any]:
         return self.gmail.mark_as_read(message_id)
 
-    # --- Ligações (Asterisk) ----------------------------------------------
-    # Próxima feature: atender/realizar ligações mantendo a conversa como assistente.
+    # --- Ligações (Asterisk ARI) ------------------------------------------
     def make_call(self, recipient: str, script: Optional[str] = None) -> Dict[str, Any]:
         """Inicia uma ligação telefônica e conduz a conversa como assistente."""
-        # TODO: integrar com Asterisk (ARI) — implementação futura, ver telephony/.
-        raise NotImplementedError("Ligações via Asterisk ainda não foram implementadas.")
+        from rock_assistant.tools.contacts import is_phone_number, normalize_phone, resolve_contact
+        from telephony.core.call_handler import get_call_handler
+
+        target = recipient.strip()
+        # Tenta resolver nome de contato para número se não for número direto
+        resolved = resolve_contact(target, config.DB_PATH)
+        phone = resolved if resolved else (normalize_phone(target) if is_phone_number(target) else target)
+
+        handler = get_call_handler()
+        return handler.start_outbound_call(recipient=phone, script=script)
 
     def answer_call(self, call_id: str) -> Dict[str, Any]:
         """Atende uma ligação recebida e conduz o diálogo como assistente."""
-        # TODO: integrar com Asterisk (ARI) — implementação futura, ver telephony/.
-        raise NotImplementedError("Atendimento de ligações via Asterisk ainda não foi implementado.")
+        from telephony.core.call_handler import get_call_handler
+
+        handler = get_call_handler()
+        return handler.handle_incoming_call(channel_id=call_id)
 
 
 _default_contacting_tool: Optional[ContactingTool] = None

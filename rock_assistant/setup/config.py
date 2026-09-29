@@ -43,7 +43,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "60"))
 OLLAMA_AUTOSTART = os.getenv("OLLAMA_AUTOSTART", "True").lower() in {"true", "1", "yes"}
-OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.2"))
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
 # 2.2 Google Gemini — mantido apenas para consulta/enriquecimento de pesquisa web
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -154,6 +154,19 @@ PIPER_MODEL_PATH = Path(
 )
 TTS_PLAYER = os.getenv("TTS_PLAYER", "")
 TTS_TEMP_DIR = Path(os.getenv("TTS_TEMP_DIR")) if os.getenv("TTS_TEMP_DIR") else None
+
+
+# ==========================================
+# 6. CONFIGURAÇÃO DE TELEFONIA (ASTERISK ARI)
+# ==========================================
+ASTERISK_ARI_URL = os.getenv("ASTERISK_ARI_URL", "http://127.0.0.1:8088/ari").rstrip("/")
+ASTERISK_ARI_USER = os.getenv("ASTERISK_ARI_USER", "rock")
+ASTERISK_ARI_PASS = os.getenv("ASTERISK_ARI_PASS", "")
+ASTERISK_STASIS_APP = os.getenv("ASTERISK_STASIS_APP", "rock_agent")
+ASTERISK_PJSIP_ENDPOINT = os.getenv("ASTERISK_PJSIP_ENDPOINT", "PJSIP")
+TELEPHONY_AUDIO_FORMAT = os.getenv("TELEPHONY_AUDIO_FORMAT", "slin16")
+TELEPHONY_RECORDINGS_DIR = DATA_DIR / "recordings"
+TELEPHONY_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_credentials_path() -> Path:

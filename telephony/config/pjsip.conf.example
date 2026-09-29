@@ -1,0 +1,47 @@
+; ==============================================================================
+; pjsip.conf - Configuração SIP / PJSIP para o Rock Assistant
+; ==============================================================================
+
+; --- Transporte UDP ---
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0:5060
+
+; --- Ramal Softphone para Testes (ex: MicroSIP, Zoiper, Linphone) ---
+[6001]
+type = endpoint
+context = rock-inbound
+disallow = all
+allow = ulaw,alaw,opus,slin16
+auth = auth6001
+aors = 6001
+
+[auth6001]
+type = auth
+auth_type = userpass
+password = rock_softphone_pass
+username = 6001
+
+[6001]
+type = aor
+max_contacts = 1
+
+; --- Tronco SIP / PSTN de Provedor VoIP (exemplo de outbound) ---
+[pstn-trunk]
+type = endpoint
+context = rock-inbound
+disallow = all
+allow = ulaw,alaw,opus,slin16
+outbound_auth = auth-pstn-trunk
+aors = pstn-trunk
+
+[auth-pstn-trunk]
+type = auth
+auth_type = userpass
+password = trunk_password
+username = trunk_username
+
+[pstn-trunk]
+type = aor
+contact = sip:sip.provedorvoip.com.br:5060

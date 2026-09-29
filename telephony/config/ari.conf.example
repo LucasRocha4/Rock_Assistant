@@ -1,0 +1,15 @@
+; ==============================================================================
+; ari.conf - Configuração da interface REST do Asterisk (ARI) para o Rock Assistant
+; ==============================================================================
+
+[general]
+enabled = yes
+pretty = yes
+allowed_origins = *
+
+; Usuário dedicado para o Rock Assistant se conectar via REST e WebSocket
+[rock]
+type = user
+read_only = no
+password = rock_secret_password_change_me
+password_format = plain
