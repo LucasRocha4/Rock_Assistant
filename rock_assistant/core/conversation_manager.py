@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
@@ -12,6 +13,8 @@ from rock_assistant.core.memory import ConversationMemory
 from rock_assistant.core.specialist import SpecialistAgent
 from rock_assistant.tools.conversation_goals import ConversationGoalStore
 from rock_assistant.tools.contacting import send_whatsapp_message, send_whatsapp_presence
+
+logger = logging.getLogger("rock.conversation_manager")
 
 
 def limit_conversation_text(text: str) -> str:

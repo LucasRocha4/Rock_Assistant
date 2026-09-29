@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, asdict
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("rock.reminder_interpreter")
 
 
 @dataclass
@@ -69,7 +72,7 @@ class ReminderInterpreter:
         if kind == "calendar_event" and not when:
             confirmation_reason = confirmation_reason or "o evento não possui data ou horário"
 
-        return ReminderDraft(
+        draft = ReminderDraft(
             raw_text=raw_text,
             short_text=short_text,
             kind=kind,
@@ -81,6 +84,16 @@ class ReminderInterpreter:
             needs_confirmation=bool(confirmation_reason),
             confirmation_reason=confirmation_reason,
         )
+        logger.debug(
+            "Lembrete interpretado: text='%s', kind=%s, when='%s', sched=%s, needs_conf=%s",
+            short_text,
+            kind,
+            when,
+            scheduled_at,
+            draft.needs_confirmation,
+        )
+        return draft
+
 
     @staticmethod
     def _clean_when(value: Any) -> Optional[str]:

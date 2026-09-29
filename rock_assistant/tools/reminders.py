@@ -1,5 +1,6 @@
 """Ferramentas para agendamento de lembretes e tarefas recorrentes com SQLite e Google Calendar API."""
 
+import logging
 import sqlite3
 import re
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rock_assistant.core.reminder_interpreter import ReminderDraft
+
+logger = logging.getLogger("rock.reminders")
 
 # Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent

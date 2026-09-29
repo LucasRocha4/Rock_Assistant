@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from rock_assistant.setup.config import DB_PATH
+
+logger = logging.getLogger("rock.contacts")
 
 
 def normalize_phone(value: str) -> str:

@@ -1,12 +1,11 @@
-"""Ponto de entrada da aplicação Rock com Memória, Especialista e Interface de Voz (STT/TTS)."""
-
-from __future__ import annotations
-
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("rock.main")
 
 import requests
 

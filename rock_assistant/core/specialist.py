@@ -1,9 +1,12 @@
 """Agente Especialista (Google Gemini), usado hoje apenas para enriquecer resultados de pesquisa web."""
 
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("rock.specialist")
 
 # Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent

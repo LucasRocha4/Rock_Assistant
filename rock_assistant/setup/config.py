@@ -42,8 +42,10 @@ DEFAULT_LLM_BACKEND = os.getenv("DEFAULT_LLM_BACKEND", "llama_local")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "60"))
+OLLAMA_WARMUP_TIMEOUT = int(os.getenv("OLLAMA_WARMUP_TIMEOUT", "30"))
 OLLAMA_AUTOSTART = os.getenv("OLLAMA_AUTOSTART", "True").lower() in {"true", "1", "yes"}
 OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
+OLLAMA_NUM_GPU = os.getenv("OLLAMA_NUM_GPU", "")
 
 # 2.2 Google Gemini — mantido apenas para consulta/enriquecimento de pesquisa web
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")

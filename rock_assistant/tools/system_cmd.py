@@ -1,10 +1,13 @@
 """Ferramentas para execução segura de comandos locais e utilitários no Kali Linux."""
 
+import logging
 import re
 import shutil
 import socket
 import subprocess
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("rock.system_cmd")
 
 
 # Padrões de comandos com alto risco de destruição de dados

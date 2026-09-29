@@ -1,9 +1,12 @@
 """Módulo de gerenciamento de memória de curto prazo do Rock Assistant."""
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("rock.memory")
 
 # Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent

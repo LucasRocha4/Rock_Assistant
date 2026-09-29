@@ -1,11 +1,14 @@
 """Lógica de parsing de intenção para comandos rápidos e roteamento para a LLM."""
 
 import json
+import logging
 import os
 import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger("rock.intent_parser")
 
 # Garante acesso a configurações do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -561,23 +564,29 @@ class IntentParser:
 
         # 7. Mensagens
         if self.MESSAGE_KEYWORD.search(cleaned_input):
-            return {
+            res = {
                 "intent": "message",
                 "payload": self._extract_message_payload(cleaned_input),
             }
+            logger.debug("Intent detectada por regra: %s", res)
+            return res
 
         # 8. Outros Comandos de Sistema / Palavra-chave
         if self.COMMAND_KEYWORD.search(cleaned_input):
-            return {
+            res = {
                 "intent": "command",
                 "payload": self._extract_command_payload(cleaned_input),
             }
+            logger.debug("Intent detectada por regra: %s", res)
+            return res
 
         # 9. Intenção Geral / Conversação
-        return {
+        res = {
             "intent": "general",
             "payload": {"text": cleaned_input},
         }
+        logger.debug("Intent padrão 'general' para input: %s", cleaned_input)
+        return res
 
     def parse_with_llm(self, user_input: str) -> Dict[str, Any]:
         """Roteia a entrada do usuário utilizando a API do Google Gemini com fallback determinístico.
@@ -590,11 +599,12 @@ class IntentParser:
 
         # O parsing local determinístico evita chamadas à nuvem quando o roteador LLM está desligado
         if not getattr(config, "LLM_ROUTER_ENABLED", False):
+            logger.debug("LLM_ROUTER_ENABLED desativado. Executando parsing local por regras.")
             return self.parse(cleaned_input)
 
         api_key = getattr(config, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
         if not api_key:
-            print("[Gemini Router] GEMINI_API_KEY não configurada. Usando fallback de regras.")
+            logger.warning("[Gemini Router] GEMINI_API_KEY não configurada. Usando fallback de regras.")
             return self.parse(cleaned_input)
 
         system_instructions = (
@@ -633,6 +643,7 @@ class IntentParser:
             )
 
             model_name = getattr(config, "GEMINI_MODEL_ROUTER", "gemini-2.0-flash-lite")
+            logger.info("Enviando entrada para Gemini Router (%s)...", model_name)
             response = client.models.generate_content(
                 model=model_name,
                 contents=f"Entrada do usuário: {cleaned_input}",
@@ -647,10 +658,12 @@ class IntentParser:
 
                 valid_intents = {"search", "reminder", "command", "message", "email", "general"}
                 if intent in valid_intents and isinstance(payload, dict):
+                    logger.info("Gemini Router classificou como intent='%s'", intent)
                     return {"intent": intent, "payload": payload}
 
         except Exception as exc:
-            print(f"[Gemini Router] Falha no roteamento via Gemini ({exc}). Usando fallback de regras.")
+            logger.warning("[Gemini Router] Falha no roteamento via Gemini (%s). Usando fallback de regras.", exc)
 
         return self.parse(cleaned_input)
+
 

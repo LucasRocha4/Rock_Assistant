@@ -1,5 +1,6 @@
 """Integração real de pesquisa na web utilizando DuckDuckGo Search (DDGS) e APIs complementares."""
 
+import logging
 import re
 import concurrent.futures
 import threading
@@ -9,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import requests
+
+logger = logging.getLogger("rock.web_search")
 
 try:
     from bs4 import BeautifulSoup
